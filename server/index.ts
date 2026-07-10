@@ -5,6 +5,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { WebSocketServer, WebSocket } from "ws";
 import open from "open";
 import { Type } from "typebox";
@@ -12,13 +14,15 @@ import {
   AuthStorage, createAgentSession, DefaultResourceLoader, defineTool,
   ModelRegistry, SessionManager, getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import type { Proposal, ServerEvent } from "../src/types.js";
+import type { GitCommit, Proposal, ServerEvent } from "../src/types.js";
 
 function arg(name: string) { const i = process.argv.indexOf(`--${name}`); return i >= 0 ? process.argv[i + 1] : undefined; }
 const cwd = path.resolve(arg("cwd") ?? process.cwd());
 const port = Number(arg("port") ?? 4317);
 const dev = process.argv.includes("--dev");
 const proposals = new Map<string, Proposal>();
+let reviewProposals: Proposal[] = [];
+let commits: GitCommit[] = [];
 const clients = new Set<WebSocket>();
 
 function send(event: ServerEvent, ws?: WebSocket) {
@@ -33,6 +37,30 @@ function safePath(relative: string) {
   return absolute;
 }
 async function readOrEmpty(file: string) { try { return await fs.readFile(file, "utf8"); } catch (e: any) { if (e.code === "ENOENT") return ""; throw e; } }
+const exec = promisify(execFile);
+async function git(args: string[]) { return (await exec("git", args, { cwd, maxBuffer: 20 * 1024 * 1024 })).stdout.trimEnd(); }
+async function gitContent(spec: string) { try { return await git(["show", spec]); } catch { return ""; } }
+async function listCommits(): Promise<GitCommit[]> {
+  const output = await git(["log", "-30", "--date=iso-strict", "--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%ad"]);
+  return output ? output.split("\n").map(line => { const [hash, shortHash, subject, author, date] = line.split("\x1f"); return { hash, shortHash, subject, author, date }; }) : [];
+}
+async function loadGitReview(target: string) {
+  let names: string[] = [], label = target;
+  const lines = (value: string) => value ? value.split("\n").filter(Boolean) : [];
+  if (target === "working") { names = [...new Set([...lines(await git(["diff", "--name-only"])), ...lines(await git(["ls-files", "--others", "--exclude-standard"]))])]; label = "未ステージの変更"; }
+  else if (target === "staged") { names = lines(await git(["diff", "--cached", "--name-only"])); label = "ステージ済みの変更"; }
+  else if (target === "uncommitted") { names = [...new Set([...lines(await git(["diff", "HEAD", "--name-only"])), ...lines(await git(["ls-files", "--others", "--exclude-standard"]))])]; label = "未コミットの変更"; }
+  else { const hash = target === "latest" ? "HEAD" : target; names = lines(await git(["diff-tree", "--root", "--no-commit-id", "--name-only", "-r", hash])); label = await git(["show", "-s", "--format=%h %s", hash]); }
+  reviewProposals = await Promise.all(names.map(async file => {
+    let before = "", after = "";
+    if (target === "working") { before = await gitContent(`:${file}`); after = await readOrEmpty(safePath(file)); }
+    else if (target === "staged") { before = await gitContent(`HEAD:${file}`); after = await gitContent(`:${file}`); }
+    else if (target === "uncommitted") { before = await gitContent(`HEAD:${file}`); after = await readOrEmpty(safePath(file)); }
+    else { const hash = target === "latest" ? "HEAD" : target; before = await gitContent(`${hash}^:${file}`); after = await gitContent(`${hash}:${file}`); }
+    return { id: `review:${target}:${file}`, path: file, before, after, summary: label, status: "pending" as const, reviewOnly: true };
+  }));
+  return { label, proposals: reviewProposals };
+}
 function addProposal(pathName: string, before: string, after: string, summary: string) {
   const proposal: Proposal = { id: randomUUID(), path: pathName, before, after, summary, status: "pending" };
   proposals.set(proposal.id, proposal); send({ type: "proposal", proposal }); return proposal;
@@ -60,6 +88,8 @@ const proposeWrite = defineTool({
     return { content: [{ type: "text" as const, text: `Proposal ${proposal.id} is waiting for user review.` }], details: { proposalId: proposal.id } };
   },
 });
+
+try { commits = await listCommits(); } catch { /* The workspace may not be a Git repository yet. */ }
 
 const authStorage = AuthStorage.create();
 const modelRegistry = ModelRegistry.create(authStorage);
@@ -90,22 +120,28 @@ if (!dev) {
 const server = createServer(app); const wss = new WebSocketServer({ server, path: "/ws" });
 wss.on("connection", (ws) => {
   clients.add(ws);
-  send({ type: "ready", cwd, model: session.model ? `${session.model.provider}/${session.model.id}` : undefined, proposals: [...proposals.values()] }, ws);
+  send({ type: "ready", cwd, model: session.model ? `${session.model.provider}/${session.model.id}` : undefined, proposals: [...reviewProposals, ...proposals.values()], commits }, ws);
   ws.on("close", () => clients.delete(ws));
   ws.on("message", async (raw) => {
     try {
       const command = JSON.parse(raw.toString());
-      if (command.type === "prompt") {
+      if (command.type === "load_review") {
+        const loaded = await loadGitReview(command.target);
+        send({ type: "review_loaded", ...loaded });
+      } else if (command.type === "prompt") {
         send({ type: "status", status: "working" });
         await session.prompt(command.message, session.isStreaming ? { streamingBehavior: "steer" } : undefined);
       } else if (command.type === "abort") await session.abort();
       else if (command.type === "review") {
-        const proposal = proposals.get(command.id); if (!proposal) throw new Error("提案が見つかりません");
+        const proposal = proposals.get(command.id) ?? reviewProposals.find(item => item.id === command.id); if (!proposal) throw new Error("提案が見つかりません");
         proposal.feedback = command.feedback;
         if (command.decision === "approve") {
-          const file = safePath(proposal.path); const current = await readOrEmpty(file);
-          if (current !== proposal.before) throw new Error(`${proposal.path} はレビュー開始後に変更されています`);
-          await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, proposal.after, "utf8"); proposal.status = "approved";
+          if (!proposal.reviewOnly) {
+            const file = safePath(proposal.path); const current = await readOrEmpty(file);
+            if (current !== proposal.before) throw new Error(`${proposal.path} はレビュー開始後に変更されています`);
+            await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, proposal.after, "utf8");
+          }
+          proposal.status = "approved";
         } else proposal.status = "rejected";
         send({ type: "proposal_updated", proposal });
         if (command.feedback) {
