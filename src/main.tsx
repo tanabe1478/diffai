@@ -26,14 +26,14 @@ function buildRows(before: string, after: string): DiffRow[] {
   }
   return rows;
 }
-function Diff({ proposal, comments, onComment }: { proposal: Proposal; comments: LineComment[]; onComment: (side: Side, line: number) => void }) {
+function Diff({ proposal, comments, onComment, onDelete }: { proposal: Proposal; comments: LineComment[]; onComment: (side: Side, line: number) => void; onDelete: (comment: LineComment) => void }) {
   const rows = useMemo(() => buildRows(proposal.before, proposal.after), [proposal.before, proposal.after]);
   return <div className="diff">{rows.map((row, i) => {
     const rowComments = comments.filter(c => c.proposalId === proposal.id && ((c.side === "old" && c.line === row.leftNo) || (c.side === "new" && c.line === row.rightNo)));
     return <React.Fragment key={i}><div className={`diff-row ${row.kind}`}>
       <span className="num">{row.leftNo && <button title={`旧 ${row.leftNo}行にコメント`} onClick={() => onComment("old", row.leftNo!)}>＋</button>}{row.leftNo}</span><pre className={row.kind === "changed" && row.leftNo ? "removed" : ""}>{row.left ?? " "}</pre>
       <span className="num">{row.rightNo && <button title={`新 ${row.rightNo}行にコメント`} onClick={() => onComment("new", row.rightNo!)}>＋</button>}{row.rightNo}</span><pre className={row.kind === "changed" && row.rightNo ? "added" : ""}>{row.right ?? " "}</pre>
-    </div>{rowComments.map((comment, j) => <div className="line-comment" key={j}><b>{comment.side === "old" ? "旧" : "新"} {comment.line}行</b>{comment.body}</div>)}</React.Fragment>;
+    </div>{rowComments.map((comment, j) => <div className="line-comment" key={j}><b>{comment.side === "old" ? "旧" : "新"} {comment.line}行</b><span>{comment.body}</span><button title="コメントを削除" onClick={() => onDelete(comment)}>×</button></div>)}</React.Fragment>;
   })}</div>;
 }
 function App() {
@@ -42,11 +42,12 @@ function App() {
   const [cwd, setCwd] = useState("接続中…"), [status, setStatus] = useState("connecting"), [error, setError] = useState("");
   const [commits, setCommits] = useState<GitCommit[]>([]), [reviewTarget, setReviewTarget] = useState("latest");
   const [comments, setComments] = useState<LineComment[]>([]), [commenting, setCommenting] = useState<{ side: Side; line: number }>();
-  const [commentBody, setCommentBody] = useState("");
+  const [commentBody, setCommentBody] = useState(""), [feedback, setFeedback] = useState<Record<string, string>>({});
+  const hydrated = useRef(false);
   const ws = useRef<WebSocket | undefined>(undefined); const assistant = useRef("");
   useEffect(() => { const socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`); ws.current = socket;
     socket.onmessage = e => { const ev = JSON.parse(e.data) as ServerEvent;
-      if (ev.type === "ready") { setCwd(ev.cwd); setCommits(ev.commits); setProposals(ev.proposals); setSelected(ev.proposals[0]?.id); }
+      if (ev.type === "ready") { setCwd(ev.cwd); setCommits(ev.commits); setProposals(ev.proposals); setSelected(ev.proposals[0]?.id); try { const saved = JSON.parse(localStorage.getItem(`diffai:review:${ev.cwd}`) ?? "{}"); setComments(saved.comments ?? []); setFeedback(saved.feedback ?? {}); } catch { setComments([]); setFeedback({}); } hydrated.current = true; }
       else if (ev.type === "review_loaded") { setProposals(ev.proposals); setSelected(ev.proposals[0]?.id); setStatus(`review: ${ev.label}`); }
       else if (ev.type === "proposal") { setProposals(p => [...p, ev.proposal]); setSelected(ev.proposal.id); }
       else if (ev.type === "proposal_updated") setProposals(p => p.map(x => x.id === ev.proposal.id ? ev.proposal : x));
@@ -54,15 +55,16 @@ function App() {
       else if (ev.type === "text_delta") { assistant.current += ev.delta; setStatus("streaming"); }
       else if (ev.type === "error") setError(ev.message);
     }; return () => socket.close(); }, []);
+  useEffect(() => { if (!hydrated.current || cwd === "接続中…") return; localStorage.setItem(`diffai:review:${cwd}`, JSON.stringify({ comments, feedback })); }, [comments, feedback, cwd]);
   const current = proposals.find(p => p.id === selected);
   const sendPrompt = () => { if (!input.trim()) return; ws.current?.send(JSON.stringify({ type: "prompt", message: input })); setMessages(m => [...m, { role: "user", text: input }]); setInput(""); };
-  const review = (decision: string) => { if (!current) return; const general = (document.querySelector("#feedback") as HTMLTextAreaElement).value.trim(); const lines = comments.filter(c => c.proposalId === current.id).map(c => `${current.path}:${c.side === "old" ? "旧" : "新"}L${c.line}\n${c.body}`).join("\n\n"); const feedback = [general, lines].filter(Boolean).join("\n\n"); ws.current?.send(JSON.stringify({ type: "review", id: current.id, decision, feedback })); };
+  const review = (decision: string) => { if (!current) return; const general = (feedback[current.id] ?? "").trim(); const lines = comments.filter(c => c.proposalId === current.id).map(c => `${current.path}:${c.side === "old" ? "旧" : "新"}L${c.line}\n${c.body}`).join("\n\n"); const reviewFeedback = [general, lines].filter(Boolean).join("\n\n"); ws.current?.send(JSON.stringify({ type: "review", id: current.id, decision, feedback: reviewFeedback })); };
   const loadReview = (target = reviewTarget) => { setReviewTarget(target); ws.current?.send(JSON.stringify({ type: "load_review", target })); };
   const saveComment = () => { if (!current || !commenting || !commentBody.trim()) return; setComments(c => [...c, { proposalId: current.id, ...commenting, body: commentBody.trim() }]); setCommenting(undefined); setCommentBody(""); };
   return <main><header><b>diff<span>ai</span></b><div className="workspace">{cwd}</div><div className={`status ${status}`}>● {status}</div></header>
     {error && <div className="error" onClick={() => setError("")}>{error} ×</div>}
     <section className="layout"><aside><h3>レビュー対象</h3><div className="target"><select value={reviewTarget} onChange={e => loadReview(e.target.value)}><option value="latest">最新コミット (HEAD)</option><option value="uncommitted">未コミットすべて</option><option value="staged">ステージ済み</option><option value="working">未ステージ</option><optgroup label="最近のコミット">{commits.map(c => <option value={c.hash} key={c.hash}>{c.shortHash} {c.subject}</option>)}</optgroup></select><button onClick={() => loadReview()}>再読込</button></div><h3>変更ファイル <small>{proposals.length}</small></h3>{proposals.map(p => <button className={selected === p.id ? "active" : ""} onClick={() => setSelected(p.id)} key={p.id}><i className={p.status}/><span>{p.path}<small>{p.summary}</small></span></button>)}{!proposals.length && <p className="empty">変更はありません</p>}</aside>
-      <article>{current ? <><div className="title"><div><h2>{current.path}</h2><p>{current.summary}</p></div><em className={current.status}>{current.status}</em></div><Diff proposal={current} comments={comments} onComment={(side, line) => { setCommenting({ side, line }); setCommentBody(""); }}/>{commenting && <div className="comment-editor"><b>{commenting.side === "old" ? "旧" : "新"} {commenting.line}行へのコメント</b><textarea autoFocus value={commentBody} onChange={e => setCommentBody(e.target.value)} placeholder="この行へのフィードバック"/><button onClick={() => setCommenting(undefined)}>キャンセル</button><button onClick={saveComment}>追加</button></div>}<div className="review"><textarea id="feedback" placeholder="全体へのフィードバック（任意）"/><button className="reject" disabled={current.status !== "pending"} onClick={() => review("reject")}>{current.reviewOnly ? "修正を依頼" : "却下・再修正"}</button><button className="approve" disabled={current.status !== "pending"} onClick={() => review("approve")}>{current.reviewOnly ? "レビュー済み" : "承認して適用"}</button></div></> : <div className="welcome"><h1>Review AI changes,<br/>before they happen.</h1><p>レビュー対象を選ぶか、Piに作業を依頼してください。</p></div>}</article>
+      <article>{current ? <><div className="title"><div><h2>{current.path}</h2><p>{current.summary}</p></div><em className={current.status}>{current.status}</em></div><Diff proposal={current} comments={comments} onComment={(side, line) => { setCommenting({ side, line }); setCommentBody(""); }} onDelete={comment => setComments(items => items.filter(item => item !== comment))}/>{commenting && <div className="comment-editor"><b>{commenting.side === "old" ? "旧" : "新"} {commenting.line}行へのコメント</b><textarea autoFocus value={commentBody} onChange={e => setCommentBody(e.target.value)} placeholder="この行へのフィードバック"/><button onClick={() => setCommenting(undefined)}>キャンセル</button><button onClick={saveComment}>追加</button></div>}<div className="review"><textarea id="feedback" value={feedback[current.id] ?? ""} onChange={e => setFeedback(items => ({ ...items, [current.id]: e.target.value }))} placeholder="全体へのフィードバック（任意）"/><button className="reject" disabled={current.status !== "pending"} onClick={() => review("reject")}>{current.reviewOnly ? "修正を依頼" : "却下・再修正"}</button><button className="approve" disabled={current.status !== "pending"} onClick={() => review("approve")}>{current.reviewOnly ? "レビュー済み" : "承認して適用"}</button></div></> : <div className="welcome"><h1>Review AI changes,<br/>before they happen.</h1><p>レビュー対象を選ぶか、Piに作業を依頼してください。</p></div>}</article>
       <aside className="chat"><h3>Pi</h3><div className="messages">{messages.map((m, i) => <div className={m.role} key={i}>{m.text}</div>)}{status === "streaming" && <div className="assistant live">{assistant.current}</div>}</div><div className="composer"><textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendPrompt(); } }} placeholder="変更内容を依頼…"/><button onClick={sendPrompt}>↑</button></div></aside></section></main>;
 }
 createRoot(document.getElementById("root")!).render(<App/>);
