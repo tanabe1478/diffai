@@ -17,12 +17,17 @@ const original = Array.from({ length: 140 }, (_, index) => `export const value${
 writeFileSync(path.join(workspace, "long-file.ts"), original);
 git("add", ".");
 git("commit", "-m", "Initial fixture commit");
+git("checkout", "-b", "feature");
+writeFileSync(path.join(workspace, "feature.ts"), "export const feature = true;\n");
+git("add", ".");
+git("commit", "-m", "Add fixture feature");
+git("checkout", "master");
 const modified = original
   .replace("export const value20 = 20;", "export const value20 = 2000;")
   .replace("export const value100 = 100;", "export const renamedValue100 = 100;");
 writeFileSync(path.join(workspace, "long-file.ts"), modified);
 writeFileSync(path.join(workspace, "untracked.ts"), "export const untracked = true;\n");
 
-const child = spawn(process.execPath, ["dist/server/index.js", "--cwd", workspace, "--port", "4321", "--no-open"], { stdio: "inherit" });
+const child = spawn(process.execPath, ["dist/server/index.js", "--cwd", workspace, "--port", "4321", "--no-open", "--wait"], { stdio: "inherit" });
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => child.kill(signal));
 child.on("exit", code => process.exit(code ?? 0));

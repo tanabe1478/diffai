@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 test("固定fixtureの未コミットdiffをスクロールし、変更行へコメントできる", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("header .workspace")).toContainText("tests\\.tmp\\workspace");
+  await expect(page.locator(".waiting-banner")).toContainText("Piがレビュー完了を待っています");
 
   await page.locator(".target select").selectOption("uncommitted");
   await expect(page.locator("aside > button")).toHaveCount(2);
@@ -40,7 +41,26 @@ test("固定fixtureの未コミットdiffをスクロールし、変更行へコ
   await expect(page.locator(".line-comment")).toHaveCount(0);
 });
 
-test("固定fixtureの最新コミットと特定コミットを選択できる", async ({ page }) => {
+test("レビュー進捗、フィルター、コメント一覧を利用できる", async ({ page }) => {
+  await page.goto("/");
+  await page.locator(".target select").selectOption("uncommitted");
+  await page.locator("aside > button").filter({ hasText: "long-file.ts" }).click();
+  await page.locator("#feedback").fill("まとめて修正するコメント");
+  await expect(page.locator(".review-summary")).toContainText("レビューコメント一覧 (1)");
+  await page.locator(".review-summary summary").click();
+  await expect(page.getByRole("button", { name: "まとめてPiへ修正依頼" })).toBeVisible();
+
+  await page.getByRole("button", { name: "レビュー済み" }).click();
+  await expect(page.locator(".progress")).toContainText("1 / 2");
+  await page.reload();
+  await page.locator(".target select").selectOption("uncommitted");
+  await expect(page.locator(".progress")).toContainText("1 / 2");
+  await page.locator(".filters button").filter({ hasText: "未確認" }).click();
+  await expect(page.locator("aside > button")).toHaveCount(1);
+  await page.getByRole("button", { name: "次の未確認" }).click();
+});
+
+test("固定fixtureの最新・特定コミットとブランチ間を比較できる", async ({ page }) => {
   await page.goto("/");
   await page.locator(".target select").selectOption("latest");
   await expect(page.locator("aside > button").filter({ hasText: "long-file.ts" })).toBeVisible();
@@ -50,4 +70,40 @@ test("固定fixtureの最新コミットと特定コミットを選択できる"
   const hash = await option.getAttribute("value");
   await page.locator(".target select").selectOption(hash!);
   await expect(page.locator("aside > button").filter({ hasText: "long-file.ts" })).toBeVisible();
+
+  await page.locator(".target select").selectOption("compare");
+  await page.getByLabel("比較元").fill("master");
+  await page.getByLabel("比較先").fill("feature");
+  await page.locator(".compare button").click();
+  await expect(page.locator("aside > button").filter({ hasText: "feature.ts" })).toBeVisible();
+
+  await page.getByLabel("比較元").fill("存在しないref");
+  await page.locator(".compare button").click();
+  await expect(page.locator(".error")).toBeVisible();
+});
+
+test("狭い画面でもファイル一覧とdiffを操作できる", async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 600 });
+  await page.goto("/");
+  await page.locator(".target select").selectOption("uncommitted");
+  await page.locator("aside > button").filter({ hasText: "long-file.ts" }).click();
+  await expect(page.locator(".chat")).toBeHidden();
+  await expect(page.locator(".diff")).toBeVisible();
+  await expect(page.locator(".diff-row.changed").first()).toBeVisible();
+});
+
+test("レビュー完了を待機中のプロセスへ通知できる", async ({ page }) => {
+  await page.goto("/");
+  await page.locator(".target select").selectOption("uncommitted");
+  const pendingFiles = page.locator("aside > button").filter({ has: page.locator("i.pending") });
+  let remaining = await pendingFiles.count();
+  while (remaining > 0) {
+    await pendingFiles.first().click();
+    await page.getByRole("button", { name: "レビュー済み" }).click();
+    remaining--;
+    await expect(pendingFiles).toHaveCount(remaining);
+  }
+  await expect(page.getByRole("button", { name: "レビューを完了" })).toBeEnabled();
+  await page.getByRole("button", { name: "レビューを完了" }).click();
+  await expect(page.locator("header .status")).toContainText("completed");
 });
