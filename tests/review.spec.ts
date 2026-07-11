@@ -94,16 +94,16 @@ test("狭い画面でもファイル一覧とdiffを操作できる", async ({ p
 
 test("レビュー完了を待機中のプロセスへ通知できる", async ({ page }) => {
   await page.goto("/");
-  await page.locator(".target select").selectOption("uncommitted");
-  const pendingFiles = page.locator("aside > button").filter({ has: page.locator("i.pending") });
-  let remaining = await pendingFiles.count();
-  while (remaining > 0) {
-    await pendingFiles.first().click();
-    await page.getByRole("button", { name: "レビュー済み" }).click();
-    remaining--;
-    await expect(pendingFiles).toHaveCount(remaining);
-  }
+  const cwd = (await page.locator("header .workspace").textContent())!;
+  await page.evaluate(({ key }) => localStorage.setItem(key, JSON.stringify({ comments: [], feedback: {}, statuses: {
+    "review:uncommitted::long-file.ts": "approved",
+    "review:uncommitted::untracked.ts": "approved",
+  } })), { key: `diffai:review:${cwd}` });
+  await page.reload();
+  await expect(page.locator(".progress")).toContainText("2 / 2");
   await expect(page.getByRole("button", { name: "レビューを完了" })).toBeEnabled();
   await page.getByRole("button", { name: "レビューを完了" }).click();
+  await expect(page.locator(".completion-overlay")).toContainText("レビュー結果をPiへ送信中");
+  await expect(page.locator(".completion-overlay")).toContainText("Piへレビュー結果を送信しました");
   await expect(page.locator("header .status")).toContainText("completed");
 });

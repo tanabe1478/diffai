@@ -136,13 +136,15 @@ wss.on("connection", (ws) => {
       const command = JSON.parse(raw.toString());
       if (command.type === "complete_review") {
         const items = [...reviewProposals, ...proposals.values()];
+        const submittedStatuses = new Map<string, Proposal["status"]>((command.reviews ?? []).map((review: { id: string; status: Proposal["status"] }) => [review.id, review.status]));
+        for (const item of items) { const submitted = submittedStatuses.get(item.id); if (submitted) item.status = submitted; }
         const pending = items.filter(item => item.status === "pending");
         if (pending.length) throw new Error(`未確認のファイルが ${pending.length} 件あります`);
         const result = { decision: items.some(item => item.status === "rejected") ? "changes_requested" : "approved", reviews: items.map(item => ({ id: item.id, path: item.path, status: item.status, feedback: item.feedback })), comments: command.comments ?? [], feedback: command.feedback ?? {} };
         console.log(`DIFFAI_REVIEW_RESULT=${JSON.stringify(result)}`);
         if (waitingNotice) clearInterval(waitingNotice);
-        send({ type: "status", status: "completed", detail: result.decision });
-        if (waitMode) setTimeout(() => { for (const client of clients) client.close(); session.dispose(); server.close(() => process.exit(0)); }, 250);
+        setTimeout(() => send({ type: "status", status: "completed", detail: result.decision }), 350);
+        if (waitMode) setTimeout(() => { for (const client of clients) client.close(); session.dispose(); server.close(() => process.exit(0)); }, 2_000);
       } else if (command.type === "load_review") {
         const loaded = await loadGitReview(command.target, command.compareWith);
         send({ type: "review_loaded", ...loaded });
