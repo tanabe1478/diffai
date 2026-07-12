@@ -2,6 +2,7 @@
   "name": "diffai",
   "version": "0.1.0",
   "description": "Review and approve Pi coding agent changes in a browser",
+  "keywords": ["pi-package"],
   "private": true,
   "repository": "github:tanabe1478/diffai",
   "type": "module",
@@ -10,8 +11,14 @@
   },
   "files": [
     "dist",
+    "extensions",
+    "skills",
     "README.md"
   ],
+  "pi": {
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
+  },
   "scripts": {
     "dev": "concurrently -k \"tsx watch server/index.ts --dev\" \"vite\"",
     "build": "vite build && tsup server/index.ts --format esm --platform node --out-dir dist/server --external @earendil-works/pi-coding-agent",
