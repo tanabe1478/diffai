@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -39,10 +39,21 @@ function safePath(relative: string) {
   if (rel.startsWith("..") || path.isAbsolute(rel)) throw new Error("Workspace外のパスは変更できません");
   return absolute;
 }
-async function readOrEmpty(file: string) { try { return await fs.readFile(file, "utf8"); } catch (e: any) { if (e.code === "ENOENT") return ""; throw e; } }
+function isBinary(buffer: Buffer) { return buffer.subarray(0, 8000).includes(0); }
+function decodeContent(buffer: Buffer) {
+  if (!isBinary(buffer)) return buffer.toString("utf8");
+  const digest = createHash("sha256").update(buffer).digest("hex").slice(0, 12);
+  return `Binary file (${buffer.length} bytes, sha256 ${digest})`;
+}
+async function readOrEmpty(file: string) { try { return decodeContent(await fs.readFile(file)); } catch (e: any) { if (e.code === "ENOENT") return ""; throw e; } }
 const exec = promisify(execFile);
 async function git(args: string[]) { return (await exec("git", args, { cwd, maxBuffer: 20 * 1024 * 1024 })).stdout.trimEnd(); }
-async function gitContent(spec: string) { try { return await git(["show", spec]); } catch { return ""; } }
+async function gitContent(spec: string) {
+  try {
+    const { stdout } = await exec("git", ["show", spec], { cwd, maxBuffer: 20 * 1024 * 1024, encoding: "buffer" });
+    return isBinary(stdout) ? decodeContent(stdout) : stdout.toString("utf8").trimEnd();
+  } catch { return ""; }
+}
 async function listCommits(): Promise<GitCommit[]> {
   const output = await git(["log", "-30", "--date=iso-strict", "--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%ad"]);
   return output ? output.split("\n").map(line => { const [hash, shortHash, subject, author, date] = line.split("\x1f"); return { hash, shortHash, subject, author, date }; }) : [];
