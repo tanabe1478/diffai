@@ -1,6 +1,7 @@
 import React from "react";
 import { common, createStarryNight } from "@wooorm/starry-night";
 import sourceTla from "@wooorm/starry-night/source.tla";
+import sourceTsx from "@wooorm/starry-night/source.tsx";
 
 type HastNode = {
   type: "root" | "element" | "text";
@@ -9,7 +10,7 @@ type HastNode = {
   children?: HastNode[];
 };
 
-const highlighter = createStarryNight([...common, sourceTla]);
+const highlighter = createStarryNight([...common, sourceTla, sourceTsx]);
 
 function languageFlag(path: string) {
   const name = path.split("/").pop() ?? path;

@@ -45,6 +45,7 @@ mkdirSync(path.join(workspace, "syntax"), { recursive: true });
 writeFileSync(path.join(workspace, "syntax", "README.md"), "# Highlight fixture\n\n`inline code`\n");
 writeFileSync(path.join(workspace, "syntax", "config.json"), "{\"enabled\": true}\n");
 writeFileSync(path.join(workspace, "syntax", "Example.swift"), "struct Example { let value: Int }\n");
+writeFileSync(path.join(workspace, "syntax", "Example.tsx"), "const View = () => <main className=\"ok\">Hello</main>;\n");
 mkdirSync(path.join(workspace, ".diffai"), { recursive: true });
 writeFileSync(path.join(workspace, ".diffai", "review-replies.json"), JSON.stringify({ replies: [
   { commentId: "feedback:review:uncommitted::src/long-file.ts", status: "fixed", body: "値の変更を確認しました" }
