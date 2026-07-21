@@ -1,8 +1,10 @@
 import { expect, test } from "@playwright/test";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 
 test("固定fixtureの未コミットdiffをスクロールし、変更行へコメントできる", async ({ page }) => {
   await page.goto("/");
-  await expect(page.locator("header .workspace")).toContainText("tests\\.tmp\\workspace");
+  await expect(page.locator("header .workspace")).toContainText(/tests[\\/]\.tmp[\\/]workspace/);
   await expect(page.locator(".waiting-banner")).toContainText("Piがレビュー完了を待っています");
 
   await page.locator(".target select").selectOption("uncommitted");
@@ -92,6 +94,19 @@ test("狭い画面でもファイル一覧とdiffを操作できる", async ({ p
   await expect(page.locator(".chat")).toBeHidden();
   await expect(page.locator(".diff")).toBeVisible();
   await expect(page.locator(".diff-row.changed").first()).toBeVisible();
+});
+
+test("バイナリファイルは文字化けせずプレースホルダ表示される", async ({ page }) => {
+  const binaryPath = path.resolve("tests/.tmp/workspace/asset.bin");
+  await fs.writeFile(binaryPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02, 0xff, 0x00, 0xfe]));
+  try {
+    await page.goto("/");
+    await page.locator(".target select").selectOption("uncommitted");
+    await page.locator(".tree-file").filter({ hasText: "asset.bin" }).click();
+    await expect(page.locator(".diff")).toContainText("Binary file (10 bytes, sha256");
+  } finally {
+    await fs.rm(binaryPath);
+  }
 });
 
 test("未確認ファイルを一括Approveしてレビュー完了を通知できる", async ({ page }) => {
