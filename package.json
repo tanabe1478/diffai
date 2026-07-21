@@ -1,8 +1,10 @@
 {
   "name": "diffai",
   "version": "0.1.0",
-  "description": "Review and approve Pi coding agent changes in a browser",
-  "keywords": ["pi-package"],
+  "description": "Review AI coding agent changes in a browser",
+  "keywords": [
+    "pi-package"
+  ],
   "private": true,
   "repository": "github:tanabe1478/diffai",
   "type": "module",
@@ -16,26 +18,28 @@
     "README.md"
   ],
   "pi": {
-    "extensions": ["./extensions"],
-    "skills": ["./skills"]
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ]
   },
   "scripts": {
     "dev": "concurrently -k \"tsx watch server/index.ts --dev\" \"vite\"",
-    "build": "vite build && tsup server/index.ts --format esm --platform node --out-dir dist/server --external @earendil-works/pi-coding-agent",
+    "build": "vite build && tsup server/index.ts --format esm --platform node --out-dir dist/server",
     "prepare": "npm run build",
     "start": "node dist/server/index.js",
     "typecheck": "tsc --noEmit",
     "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.80.6",
     "@wooorm/starry-night": "^3.10.0",
     "diff": "^9.0.0",
     "express": "^5.1.0",
     "open": "^10.1.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "typebox": "^1.0.13",
     "ws": "^8.18.3"
   },
   "devDependencies": {

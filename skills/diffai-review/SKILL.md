@@ -60,8 +60,28 @@ DIFFAI_REVIEW_RESULT={...}
 ```
 
 - `decision: "approved"` の場合: 承認されたことをユーザーへ報告する。
-- `decision: "changes_requested"` の場合: `reviews`、`comments`、`feedback` を読み、指摘に沿って修正する。
+- `decision: "changes_requested"` の場合: `reviews`、`comments`、`fileFeedback`、`feedback` を読み、指摘に沿って修正する。
+- 修正・返答後は、結果JSONの `replyFile`（通常 `.diffai/review-replies.json`）へ `replyFormat` に従って返信を書く。次回diffai起動時にUIへ表示される。
 - JSONが出ていない場合: 起動失敗、ブラウザ未完了、タイムアウト、誤ってバックグラウンド化した可能性を確認する。
+
+## 返信ファイル
+
+レビューコメントやファイル全体フィードバックにはIDが付く。呼び出し元エージェントが対応したら、次の形式で返信を書く。
+
+```json
+{
+  "replies": [
+    {
+      "commentId": "<comments[].id または fileFeedback[].id>",
+      "status": "fixed",
+      "body": "修正しました"
+    }
+  ]
+}
+```
+
+`status` は `fixed` / `replied` / `wontfix` のいずれか。
+既存の返信がある場合は消さずに更新・追記する。
 
 ## 誤ってバックグラウンド起動した場合の復旧
 
