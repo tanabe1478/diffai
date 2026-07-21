@@ -6,7 +6,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { WebSocketServer, WebSocket } from "ws";
 import open from "open";
@@ -15,18 +16,85 @@ import {
   AuthStorage, createAgentSession, DefaultResourceLoader, defineTool,
   ModelRegistry, SessionManager, getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import type { GitCommit, GitRef, Proposal, ServerEvent } from "../src/types.js";
+import type { GitCommit, GitRef, Proposal, ReviewReply, ServerEvent } from "../src/types.js";
 
 function arg(name: string) { const i = process.argv.indexOf(`--${name}`); return i >= 0 ? process.argv[i + 1] : undefined; }
 const cwd = path.resolve(arg("cwd") ?? process.cwd());
 const requestedPort = Number(arg("port") ?? 4317);
 const dev = process.argv.includes("--dev");
+const serveMode = dev || process.argv.includes("--serve");
 const waitMode = true;
+let reviewSessionId = randomUUID();
+const sessionDescriptor = path.join(tmpdir(), `diffai-${createHash("sha256").update(cwd).digest("hex").slice(0, 16)}.json`);
+
+type SessionDescriptor = { cwd: string; port: number; pid: number };
+
+async function activeSession(): Promise<SessionDescriptor | undefined> {
+  try {
+    const descriptor = JSON.parse(await fs.readFile(sessionDescriptor, "utf8")) as SessionDescriptor;
+    const response = await fetch(`http://127.0.0.1:${descriptor.port}/api/state`, { signal: AbortSignal.timeout(1_000) });
+    if (response.ok && (await response.json() as { cwd: string }).cwd === cwd) return descriptor;
+  } catch { /* Stale or missing descriptor. */ }
+  await fs.rm(sessionDescriptor, { force: true });
+  return undefined;
+}
+
+async function waitForServer(port: number) {
+  for (let attempt = 0; attempt < 80; attempt++) {
+    try { if ((await fetch(`http://127.0.0.1:${port}/api/state`)).ok) return; } catch { /* Starting. */ }
+    await new Promise(resolve => setTimeout(resolve, 125));
+  }
+  throw new Error("diffai server did not start");
+}
+
+async function waitForReviewResult(port: number, after: number) {
+  const notice = setInterval(() => console.log("状態: ブラウザでのレビュー完了を待っています…"), 30_000);
+  notice.unref();
+  try {
+    while (true) {
+      const response = await fetch(`http://127.0.0.1:${port}/api/review-result?after=${after}`);
+      if (response.status === 200) return await response.json();
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+  } finally { clearInterval(notice); }
+}
+
+async function runWaiter() {
+  let descriptor = await activeSession();
+  let after = 0;
+  if (descriptor) {
+    const state = await fetch(`http://127.0.0.1:${descriptor.port}/api/state`).then(response => response.json()) as { resultCount: number };
+    after = state.resultCount;
+    const response = await fetch(`http://127.0.0.1:${descriptor.port}/api/reload`, { method: "POST" });
+    if (!response.ok) throw new Error(`diffai reload failed: ${response.status}`);
+    console.log(`diffai: http://127.0.0.1:${descriptor.port}\nworkspace: ${cwd}\n状態: 同じブラウザで再レビュー待ち`);
+  } else {
+    const port = await availablePort(requestedPort);
+    const modulePath = fileURLToPath(import.meta.url);
+    const child = spawn(process.execPath, [...process.execArgv, modulePath, "--serve", "--cwd", cwd, "--port", String(port), "--no-open"], { detached: true, stdio: "ignore" });
+    child.unref();
+    descriptor = { cwd, port, pid: child.pid! };
+    await waitForServer(port);
+    await fs.writeFile(sessionDescriptor, JSON.stringify(descriptor), "utf8");
+    const url = `http://127.0.0.1:${port}`;
+    console.log(`diffai: ${url}\nworkspace: ${cwd}\n状態: ブラウザでのレビュー待ち\n操作: 全ファイルを判断し「レビューを完了」を押してください`);
+    if (!process.argv.includes("--no-open")) await open(url);
+  }
+  const result = await waitForReviewResult(descriptor.port, after);
+  console.log(`DIFFAI_REVIEW_RESULT=${JSON.stringify(result)}`);
+}
+
+if (!serveMode) {
+  await runWaiter();
+  process.exit(0);
+}
+
 const proposals = new Map<string, Proposal>();
 let reviewProposals: Proposal[] = [];
 let commits: GitCommit[] = [];
 let refs: GitRef[] = [];
 const clients = new Set<WebSocket>();
+const reviewResults: unknown[] = [];
 
 function send(event: ServerEvent, ws?: WebSocket) {
   const text = JSON.stringify(event);
@@ -46,6 +114,16 @@ function decodeContent(buffer: Buffer) {
   return `Binary file (${buffer.length} bytes, sha256 ${digest})`;
 }
 async function readOrEmpty(file: string) { try { return decodeContent(await fs.readFile(file)); } catch (e: any) { if (e.code === "ENOENT") return ""; throw e; } }
+async function loadReviewReplies(): Promise<ReviewReply[]> {
+  try {
+    const text = await fs.readFile(safePath(".diffai/review-replies.json"), "utf8");
+    const parsed = JSON.parse(text) as { replies?: ReviewReply[] } | ReviewReply[];
+    return Array.isArray(parsed) ? parsed : parsed.replies ?? [];
+  } catch (error: any) {
+    if (error.code !== "ENOENT") console.warn(`diffai: review replies could not be loaded: ${error.message}`);
+    return [];
+  }
+}
 const exec = promisify(execFile);
 async function git(args: string[]) { return (await exec("git", args, { cwd, maxBuffer: 20 * 1024 * 1024 })).stdout.trimEnd(); }
 async function gitContent(spec: string) {
@@ -70,6 +148,7 @@ async function loadGitReview(target: string, compareWith?: string) {
   else if (target === "uncommitted") { names = [...new Set([...lines(await git(["diff", "HEAD", "--name-only"])), ...lines(await git(["ls-files", "--others", "--exclude-standard"]))])]; label = "未コミットの変更"; }
   else if (target === "compare" && compareWith) { const [base, head] = compareWith.split("\x1f"); names = lines(await git(["diff", "--name-only", base, head])); label = `${base} … ${head}`; }
   else { const hash = target === "latest" ? "HEAD" : target; names = lines(await git(["diff-tree", "--root", "--no-commit-id", "--name-only", "-r", hash])); label = await git(["show", "-s", "--format=%h %s", hash]); }
+  names = names.filter(file => file !== ".diffai/review-replies.json");
   reviewProposals = await Promise.all(names.map(async file => {
     let before = "", after = "";
     if (target === "working") { before = await gitContent(`:${file}`); after = await readOrEmpty(safePath(file)); }
@@ -109,7 +188,8 @@ const proposeWrite = defineTool({
   },
 });
 
-try { commits = await listCommits(); refs = await listRefs(); if (waitMode) await loadGitReview("uncommitted"); } catch { /* The workspace may not be a Git repository yet. */ }
+let reviewReplies: ReviewReply[] = [];
+try { commits = await listCommits(); refs = await listRefs(); reviewReplies = await loadReviewReplies(); if (waitMode) await loadGitReview("uncommitted"); } catch { /* The workspace may not be a Git repository yet. */ }
 
 const authStorage = AuthStorage.create();
 const modelRegistry = ModelRegistry.create(authStorage);
@@ -132,6 +212,22 @@ session.subscribe((event) => {
 });
 
 const app = express();
+app.use(express.json());
+app.get("/api/state", (_req, res) => res.json({ cwd, resultCount: reviewResults.length }));
+app.get("/api/review-result", (req, res) => {
+  const after = Number(req.query.after ?? 0);
+  if (Number.isInteger(after) && after >= 0 && after < reviewResults.length) res.json(reviewResults[after]);
+  else res.sendStatus(204);
+});
+app.post("/api/reload", async (_req, res) => {
+  try {
+    reviewSessionId = randomUUID();
+    reviewReplies = await loadReviewReplies();
+    const loaded = await loadGitReview("uncommitted");
+    send({ type: "review_loaded", cwd, ...loaded, reviewSessionId, replies: reviewReplies });
+    res.json({ reviewSessionId });
+  } catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : String(error) }); }
+});
 if (!dev) {
   const here = path.dirname(fileURLToPath(import.meta.url));
   app.use(express.static(path.resolve(here, "../client")));
@@ -140,7 +236,7 @@ if (!dev) {
 const server = createServer(app); const wss = new WebSocketServer({ server, path: "/ws" });
 wss.on("connection", (ws) => {
   clients.add(ws);
-  send({ type: "ready", cwd, model: session.model ? `${session.model.provider}/${session.model.id}` : undefined, proposals: [...reviewProposals, ...proposals.values()], commits, refs, waitMode, initialTarget: waitMode ? "uncommitted" : "latest" }, ws);
+  send({ type: "ready", cwd, model: session.model ? `${session.model.provider}/${session.model.id}` : undefined, proposals: [...reviewProposals, ...proposals.values()], commits, refs, waitMode, initialTarget: waitMode ? "uncommitted" : "latest", reviewSessionId, replies: reviewReplies }, ws);
   ws.on("close", () => clients.delete(ws));
   ws.on("message", async (raw) => {
     try {
@@ -151,14 +247,22 @@ wss.on("connection", (ws) => {
         for (const item of items) { const submitted = submittedStatuses.get(item.id); if (submitted) item.status = submitted; }
         const pending = items.filter(item => item.status === "pending");
         if (pending.length) throw new Error(`未確認のファイルが ${pending.length} 件あります`);
-        const result = { decision: items.some(item => item.status === "rejected") ? "changes_requested" : "approved", reviews: items.map(item => ({ id: item.id, path: item.path, status: item.status, feedback: item.feedback })), comments: command.comments ?? [], feedback: command.feedback ?? {} };
-        console.log(`DIFFAI_REVIEW_RESULT=${JSON.stringify(result)}`);
-        if (waitingNotice) clearInterval(waitingNotice);
+        const feedback = command.feedback ?? {};
+        const fileFeedback = items
+          .map(item => ({ id: `feedback:${item.id}`, proposalId: item.id, path: item.path, body: feedback[item.id] }))
+          .filter(item => typeof item.body === "string" && item.body.trim());
+        const result = {
+          decision: items.some(item => item.status === "rejected") ? "changes_requested" : "approved",
+          reviews: items.map(item => ({ id: item.id, path: item.path, status: item.status, feedback: item.feedback })),
+          comments: command.comments ?? [], fileFeedback, feedback,
+          replyFile: ".diffai/review-replies.json",
+          replyFormat: { replies: [{ commentId: "<comment id or fileFeedback id>", status: "fixed|replied|wontfix", body: "<reply shown in diffai>" }] },
+        };
+        reviewResults.push(result);
         setTimeout(() => send({ type: "status", status: "completed", detail: result.decision }), 350);
-        if (waitMode) setTimeout(() => { for (const client of clients) client.close(); session.dispose(); server.close(() => process.exit(0)); }, 2_000);
       } else if (command.type === "load_review") {
         const loaded = await loadGitReview(command.target, command.compareWith);
-        send({ type: "review_loaded", ...loaded });
+        send({ type: "review_loaded", cwd, ...loaded, reviewSessionId, replies: reviewReplies });
       } else if (command.type === "prompt") {
         send({ type: "status", status: "working" });
         await session.prompt(command.message, session.isStreaming ? { streamingBehavior: "steer" } : undefined);

@@ -28,7 +28,28 @@ const modified = original
   .replace("export const value100 = 100;", "export const renamedValue100 = 100;");
 writeFileSync(path.join(workspace, "src", "long-file.ts"), modified);
 writeFileSync(path.join(workspace, "untracked.ts"), "export const untracked = true;\n");
+mkdirSync(path.join(workspace, "formal"), { recursive: true });
+writeFileSync(path.join(workspace, "formal", "StudyDict.tla"), `---- MODULE StudyDict ----
+EXTENDS FiniteSets
 
-const child = spawn(process.execPath, ["dist/server/index.js", "--cwd", workspace, "--port", "4321", "--no-open"], { stdio: "inherit" });
+\\* TLA+ syntax highlighting fixture
+CONSTANTS Instances
+VARIABLE disk
+
+NoLostUpdate == disk \\subseteq Instances
+====
+`);
+mkdirSync(path.join(workspace, "syntax"), { recursive: true });
+writeFileSync(path.join(workspace, "syntax", "README.md"), "# Highlight fixture\n\n`inline code`\n");
+writeFileSync(path.join(workspace, "syntax", "config.json"), "{\"enabled\": true}\n");
+writeFileSync(path.join(workspace, "syntax", "Example.swift"), "struct Example { let value: Int }\n");
+mkdirSync(path.join(workspace, ".diffai"), { recursive: true });
+writeFileSync(path.join(workspace, ".diffai", "review-replies.json"), JSON.stringify({ replies: [{
+  commentId: "feedback:review:uncommitted::src/long-file.ts",
+  status: "fixed",
+  body: "前回の指摘を修正しました",
+}] }));
+
+const child = spawn(process.execPath, ["dist/server/index.js", "--serve", "--cwd", workspace, "--port", "4321", "--no-open"], { stdio: "inherit" });
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => child.kill(signal));
 child.on("exit", code => process.exit(code ?? 0));

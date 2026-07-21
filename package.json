@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.80.6",
+    "@wooorm/starry-night": "^3.10.0",
     "diff": "^9.0.0",
     "express": "^5.1.0",
     "open": "^10.1.2",
