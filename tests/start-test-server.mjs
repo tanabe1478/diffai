@@ -1,5 +1,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 const workspace = path.resolve("tests/.tmp/workspace");
@@ -49,5 +51,13 @@ writeFileSync(path.join(workspace, ".diffai", "review-replies.json"), JSON.strin
 ] }, null, 2));
 
 const child = spawn(process.execPath, ["dist/server/index.js", "--serve", "--cwd", workspace, "--port", "4321", "--no-open"], { stdio: "inherit" });
-for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => child.kill(signal));
-child.on("exit", code => process.exit(code ?? 0));
+const descriptorPath = path.join(tmpdir(), `diffai-${createHash("sha256").update(workspace).digest("hex").slice(0, 16)}.json`);
+writeFileSync(descriptorPath, JSON.stringify({ cwd: workspace, port: 4321, pid: child.pid }));
+for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => {
+  rmSync(descriptorPath, { force: true });
+  child.kill(signal);
+});
+child.on("exit", code => {
+  rmSync(descriptorPath, { force: true });
+  process.exit(code ?? 0);
+});
