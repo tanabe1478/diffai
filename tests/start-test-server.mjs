@@ -44,11 +44,9 @@ writeFileSync(path.join(workspace, "syntax", "README.md"), "# Highlight fixture\
 writeFileSync(path.join(workspace, "syntax", "config.json"), "{\"enabled\": true}\n");
 writeFileSync(path.join(workspace, "syntax", "Example.swift"), "struct Example { let value: Int }\n");
 mkdirSync(path.join(workspace, ".diffai"), { recursive: true });
-writeFileSync(path.join(workspace, ".diffai", "review-replies.json"), JSON.stringify({ replies: [{
-  commentId: "feedback:review:uncommitted::src/long-file.ts",
-  status: "fixed",
-  body: "前回の指摘を修正しました",
-}] }));
+writeFileSync(path.join(workspace, ".diffai", "review-replies.json"), JSON.stringify({ replies: [
+  { commentId: "feedback:review:uncommitted::src/long-file.ts", status: "fixed", body: "値の変更を確認しました" }
+] }, null, 2));
 
 const child = spawn(process.execPath, ["dist/server/index.js", "--serve", "--cwd", workspace, "--port", "4321", "--no-open"], { stdio: "inherit" });
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => child.kill(signal));

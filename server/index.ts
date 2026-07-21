@@ -11,11 +11,6 @@ import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { WebSocketServer, WebSocket } from "ws";
 import open from "open";
-import { Type } from "typebox";
-import {
-  AuthStorage, createAgentSession, DefaultResourceLoader, defineTool,
-  ModelRegistry, SessionManager, getAgentDir,
-} from "@earendil-works/pi-coding-agent";
 import type { GitCommit, GitRef, Proposal, ReviewReply, ServerEvent } from "../src/types.js";
 
 function arg(name: string) { const i = process.argv.indexOf(`--${name}`); return i >= 0 ? process.argv[i + 1] : undefined; }
@@ -89,7 +84,6 @@ if (!serveMode) {
   process.exit(0);
 }
 
-const proposals = new Map<string, Proposal>();
 let reviewProposals: Proposal[] = [];
 let commits: GitCommit[] = [];
 let refs: GitRef[] = [];
@@ -160,56 +154,8 @@ async function loadGitReview(target: string, compareWith?: string) {
   }));
   return { label, proposals: reviewProposals };
 }
-function addProposal(pathName: string, before: string, after: string, summary: string) {
-  const proposal: Proposal = { id: randomUUID(), path: pathName, before, after, summary, status: "pending" };
-  proposals.set(proposal.id, proposal); send({ type: "proposal", proposal }); return proposal;
-}
-
-const proposeEdit = defineTool({
-  name: "propose_edit", label: "Propose edit",
-  description: "Propose an exact text replacement for browser review. Does not modify the file.",
-  parameters: Type.Object({ path: Type.String(), oldText: Type.String(), newText: Type.String(), summary: Type.String() }),
-  execute: async (_id, input) => {
-    const file = safePath(input.path); const before = await readOrEmpty(file);
-    const count = before.split(input.oldText).length - 1;
-    if (!input.oldText || count !== 1) throw new Error(`oldText must occur exactly once (found ${count})`);
-    const proposal = addProposal(input.path, before, before.replace(input.oldText, input.newText), input.summary);
-    return { content: [{ type: "text" as const, text: `Proposal ${proposal.id} is waiting for user review.` }], details: { proposalId: proposal.id } };
-  },
-});
-const proposeWrite = defineTool({
-  name: "propose_write", label: "Propose file",
-  description: "Propose complete file contents for browser review. Does not modify the file.",
-  parameters: Type.Object({ path: Type.String(), content: Type.String(), summary: Type.String() }),
-  execute: async (_id, input) => {
-    const before = await readOrEmpty(safePath(input.path));
-    const proposal = addProposal(input.path, before, input.content, input.summary);
-    return { content: [{ type: "text" as const, text: `Proposal ${proposal.id} is waiting for user review.` }], details: { proposalId: proposal.id } };
-  },
-});
-
 let reviewReplies: ReviewReply[] = [];
-try { commits = await listCommits(); refs = await listRefs(); reviewReplies = await loadReviewReplies(); if (waitMode) await loadGitReview("uncommitted"); } catch { /* The workspace may not be a Git repository yet. */ }
-
-const authStorage = AuthStorage.create();
-const modelRegistry = ModelRegistry.create(authStorage);
-const loader = new DefaultResourceLoader({
-  cwd, agentDir: getAgentDir(),
-  systemPromptOverride: (base) => `${base ?? "You are a coding assistant."}\n\nYou are connected to diffai. Never modify files using shell commands. Use propose_edit or propose_write for every file change so the user can review it in the browser.`,
-});
-await loader.reload();
-const { session } = await createAgentSession({
-  cwd, authStorage, modelRegistry, resourceLoader: loader,
-  sessionManager: SessionManager.create(cwd),
-  tools: ["read", "grep", "find", "ls", "bash", "propose_edit", "propose_write"],
-  customTools: [proposeEdit, proposeWrite],
-});
-session.subscribe((event) => {
-  if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") send({ type: "text_delta", delta: event.assistantMessageEvent.delta });
-  else if (event.type === "agent_start") send({ type: "status", status: "working" });
-  else if (event.type === "agent_end") send({ type: "status", status: "idle" });
-  else if (event.type === "tool_execution_start") send({ type: "status", status: "tool", detail: event.toolName });
-});
+try { commits = await listCommits(); refs = await listRefs(); reviewReplies = await loadReviewReplies(); await loadGitReview("uncommitted"); } catch { /* The workspace may not be a Git repository yet. */ }
 
 const app = express();
 app.use(express.json());
@@ -236,13 +182,13 @@ if (!dev) {
 const server = createServer(app); const wss = new WebSocketServer({ server, path: "/ws" });
 wss.on("connection", (ws) => {
   clients.add(ws);
-  send({ type: "ready", cwd, model: session.model ? `${session.model.provider}/${session.model.id}` : undefined, proposals: [...reviewProposals, ...proposals.values()], commits, refs, waitMode, initialTarget: waitMode ? "uncommitted" : "latest", reviewSessionId, replies: reviewReplies }, ws);
+  send({ type: "ready", cwd, proposals: reviewProposals, commits, refs, waitMode, initialTarget: "uncommitted", reviewSessionId, replies: reviewReplies }, ws);
   ws.on("close", () => clients.delete(ws));
   ws.on("message", async (raw) => {
     try {
       const command = JSON.parse(raw.toString());
       if (command.type === "complete_review") {
-        const items = [...reviewProposals, ...proposals.values()];
+        const items = reviewProposals;
         const submittedStatuses = new Map<string, Proposal["status"]>((command.reviews ?? []).map((review: { id: string; status: Proposal["status"] }) => [review.id, review.status]));
         for (const item of items) { const submitted = submittedStatuses.get(item.id); if (submitted) item.status = submitted; }
         const pending = items.filter(item => item.status === "pending");
@@ -263,26 +209,11 @@ wss.on("connection", (ws) => {
       } else if (command.type === "load_review") {
         const loaded = await loadGitReview(command.target, command.compareWith);
         send({ type: "review_loaded", cwd, ...loaded, reviewSessionId, replies: reviewReplies });
-      } else if (command.type === "prompt") {
-        send({ type: "status", status: "working" });
-        await session.prompt(command.message, session.isStreaming ? { streamingBehavior: "steer" } : undefined);
-      } else if (command.type === "abort") await session.abort();
-      else if (command.type === "review") {
-        const proposal = proposals.get(command.id) ?? reviewProposals.find(item => item.id === command.id); if (!proposal) throw new Error("提案が見つかりません");
+      } else if (command.type === "review") {
+        const proposal = reviewProposals.find(item => item.id === command.id); if (!proposal) throw new Error("提案が見つかりません");
         proposal.feedback = command.feedback;
-        if (command.decision === "approve") {
-          if (!proposal.reviewOnly) {
-            const file = safePath(proposal.path); const current = await readOrEmpty(file);
-            if (current !== proposal.before) throw new Error(`${proposal.path} はレビュー開始後に変更されています`);
-            await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, proposal.after, "utf8");
-          }
-          proposal.status = "approved";
-        } else proposal.status = "rejected";
+        proposal.status = command.decision === "approve" ? "approved" : "rejected";
         send({ type: "proposal_updated", proposal });
-        if (command.feedback && !waitMode) {
-          const msg = `Review feedback for proposal ${proposal.id} (${proposal.path}, ${proposal.status}): ${command.feedback}`;
-          if (session.isStreaming) await session.steer(msg); else await session.prompt(msg);
-        }
       }
     } catch (error) { send({ type: "error", message: error instanceof Error ? error.message : String(error) }, ws); }
   });

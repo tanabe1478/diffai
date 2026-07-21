@@ -1,4 +1,6 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+type ExtensionAPI = {
+  on(event: "tool_call", handler: (event: { toolName: string; input: { command?: unknown } }, ctx: { cwd: string }) => unknown): void;
+};
 
 function isDiffaiCommand(command: string, cwd: string) {
   return /(?:^|\s)npx(?:\s+--?[\w.-]+(?:=[^\s]+)?)*\s+github:tanabe1478\/diffai(?:\s|$)/.test(command)
