@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { parseDiffFromFile, registerCustomLanguage, type DiffLineAnnotation, type LanguageRegistration } from "@pierre/diffs";
+import { FileDiff, type FileDiffProps } from "@pierre/diffs/react";
 import type { Proposal, ReviewReply } from "../types";
 import type { LineComment, Side } from "../reviewTypes";
-import { buildRows } from "../diffRows";
-import { highlightLines } from "../syntaxHighlight";
 
 type Props = {
   proposal: Proposal;
@@ -12,28 +12,61 @@ type Props = {
   onDelete: (comment: LineComment) => void;
 };
 
+type CommentAnnotation = DiffLineAnnotation<LineComment>;
+type DiffOptions = NonNullable<FileDiffProps<LineComment>["options"]>;
+
+registerCustomLanguage("tla", async () => {
+  const { default: grammar } = await import("@wooorm/starry-night/source.tla");
+  return { default: [{ ...grammar, name: "tla" } as LanguageRegistration] };
+}, ["tla"]);
+
 export function DiffView({ proposal, comments, replies, onComment, onDelete }: Props) {
-  const rows = useMemo(() => buildRows(proposal.before, proposal.after), [proposal.before, proposal.after]);
-  const [highlighted, setHighlighted] = useState<{ old?: React.ReactNode[][]; new?: React.ReactNode[][] }>({});
-  useEffect(() => {
-    let active = true;
-    Promise.all([highlightLines(proposal.before, proposal.path), highlightLines(proposal.after, proposal.path)])
-      .then(([oldLines, newLines]) => { if (active) setHighlighted({ old: oldLines, new: newLines }); });
-    return () => { active = false; };
-  }, [proposal.before, proposal.after, proposal.path]);
+  const [diffStyle, setDiffStyle] = useState<"split" | "unified">(() => window.matchMedia("(max-width: 900px)").matches ? "unified" : "split");
+  const [expandUnchanged, setExpandUnchanged] = useState(false);
+  const fileDiff = useMemo(() => {
+    const lang = proposal.path.toLowerCase().endsWith(".tla") ? "tla" : undefined;
+    return parseDiffFromFile(
+      { name: proposal.path, contents: proposal.before, lang },
+      { name: proposal.path, contents: proposal.after, lang },
+    );
+  }, [proposal.id, proposal.path, proposal.before, proposal.after]);
+
+  const fileComments = useMemo(() => comments.filter(comment => comment.proposalId === proposal.id), [comments, proposal.id]);
+  const annotations = useMemo<CommentAnnotation[]>(() => fileComments
+    .filter(comment => comment.line > 0 && comment.line <= (comment.side === "old" ? proposal.before : proposal.after).split("\n").length)
+    .map(comment => ({
+      side: comment.side === "old" ? "deletions" : "additions",
+      lineNumber: comment.line,
+      metadata: comment,
+    })), [fileComments, proposal.before, proposal.after]);
+  const annotatedIds = new Set(annotations.map(annotation => annotation.metadata.id));
+  const orphanComments = fileComments.filter(comment => !annotatedIds.has(comment.id));
   const replyByCommentId = useMemo(() => new Map(replies.map(reply => [reply.commentId, reply])), [replies]);
 
-  const currentLine = (comment: LineComment) =>
-    rows.find(row => comment.side === "old" ? row.leftNo === comment.line : row.rightNo === comment.line)?.[
-      comment.side === "old" ? "left" : "right"
-    ];
+  const options = useMemo<DiffOptions>(() => ({
+    diffStyle,
+    diffIndicators: "bars",
+    disableFileHeader: true,
+    expandUnchanged,
+    collapsedContextThreshold: 6,
+    expansionLineCount: 40,
+    hunkSeparators: "line-info",
+    lineDiffType: "word-alt",
+    lineHoverHighlight: "both",
+    enableGutterUtility: true,
+    onGutterUtilityClick: range => onComment(range.side === "deletions" ? "old" : "new", range.start),
+    overflow: "scroll",
+    theme: { light: "pierre-light", dark: "pierre-dark" },
+    themeType: "system",
+    onLineNumberClick: ({ annotationSide, lineNumber }) => onComment(annotationSide === "deletions" ? "old" : "new", lineNumber),
+  }), [diffStyle, expandUnchanged, onComment]);
 
-  const renderComment = (comment: LineComment, key: React.Key) => {
-    const reply = replyByCommentId.get(comment.id);
-    const line = currentLine(comment);
+  const renderComment = (comment: LineComment) => {
+    const source = comment.side === "old" ? proposal.before : proposal.after;
+    const line = source.split("\n")[comment.line - 1];
     const outdated = comment.quote !== undefined && line !== comment.quote;
-
-    return <div className={`line-comment ${outdated ? "outdated" : ""}`} key={key}>
+    const reply = replyByCommentId.get(comment.id);
+    return <div className={`line-comment ${outdated ? "outdated" : ""}`} data-comment-id={comment.id}>
       <b>{comment.side === "old" ? "旧" : "新"} {comment.line}行{outdated && <small>outdated</small>}</b>
       <span>
         <code>{comment.quote ?? line ?? ""}</code>
@@ -44,23 +77,19 @@ export function DiffView({ proposal, comments, replies, onComment, onDelete }: P
     </div>;
   };
 
-  const orphanComments = comments.filter(comment => comment.proposalId === proposal.id && currentLine(comment) === undefined);
-
-  return <div className="diff">
-    {orphanComments.map(comment => renderComment(comment, comment.id))}
-    {rows.map((row, i) => {
-      const rowComments = comments.filter(c => c.proposalId === proposal.id && ((c.side === "old" && c.line === row.leftNo) || (c.side === "new" && c.line === row.rightNo)));
-      const left = row.leftNo ? highlighted.old?.[row.leftNo - 1] ?? row.left : row.left;
-      const right = row.rightNo ? highlighted.new?.[row.rightNo - 1] ?? row.right : row.right;
-      return <React.Fragment key={i}>
-        <div className={`diff-row ${row.kind}`}>
-          <span className="num">{row.leftNo && <button title={`旧 ${row.leftNo}行にコメント`} onClick={() => onComment("old", row.leftNo!)}>＋</button>}{row.leftNo}</span>
-          <pre className={row.kind === "changed" && row.leftNo ? "removed" : ""}>{left ?? " "}</pre>
-          <span className="num">{row.rightNo && <button title={`新 ${row.rightNo}行にコメント`} onClick={() => onComment("new", row.rightNo!)}>＋</button>}{row.rightNo}</span>
-          <pre className={row.kind === "changed" && row.rightNo ? "added" : ""}>{right ?? " "}</pre>
-        </div>
-        {rowComments.map((comment, j) => renderComment(comment, `${i}:${j}`))}
-      </React.Fragment>;
-    })}
+  return <div className="diff pierre-diff">
+    <div className="diff-toolbar" aria-label="Diff表示設定">
+      <button className={diffStyle === "split" ? "active" : ""} onClick={() => setDiffStyle("split")}>左右</button>
+      <button className={diffStyle === "unified" ? "active" : ""} onClick={() => setDiffStyle("unified")}>一列</button>
+      <button onClick={() => setExpandUnchanged(value => !value)}>{expandUnchanged ? "変更周辺のみ" : "全行を表示"}</button>
+    </div>
+    {orphanComments.map(comment => <div key={comment.id}>{renderComment(comment)}</div>)}
+    <FileDiff<LineComment>
+      fileDiff={fileDiff}
+      lineAnnotations={annotations}
+      options={options}
+      renderAnnotation={annotation => renderComment(annotation.metadata)}
+      className="diffai-file-diff"
+    />
   </div>;
 }

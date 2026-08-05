@@ -7,7 +7,6 @@ type SavedStatus = { status: Proposal["status"]; before: string; after: string }
 import { buildFileTree } from "./fileTree";
 import { FileTree } from "./components/FileTree";
 import { ReviewPane } from "./components/ReviewPane";
-import "@wooorm/starry-night/style/dark";
 import "./style.css";
 
 function App() {

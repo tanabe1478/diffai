@@ -11,14 +11,6 @@ export type LineComment = {
   quote?: string;
 };
 
-export type DiffRow = {
-  kind: "same" | "changed";
-  left?: string;
-  right?: string;
-  leftNo?: number;
-  rightNo?: number;
-};
-
 export type FileTreeNode = {
   name: string;
   path: string;

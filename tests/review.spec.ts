@@ -23,18 +23,22 @@ test("固定fixtureの未コミットdiffをスクロールし、変更行へコ
   await expect(page.locator(".feedback-box .reply")).toContainText("値の変更を確認しました");
 
   const diff = page.locator(".diff");
+  await expect(page.locator('.diffai-file-diff [data-line-type="change-addition"]').first()).toBeVisible();
+  await expect(page.locator('.diffai-file-diff [data-column-number="50"]')).toHaveCount(0);
+  await page.getByRole("button", { name: "全行を表示" }).click();
+  await expect(page.locator('.diffai-file-diff [data-column-number="50"]').first()).toBeVisible();
   const metrics = await diff.evaluate(element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }));
   expect(metrics.clientHeight).toBeGreaterThan(0);
   expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
 
   await diff.evaluate(element => { element.scrollTop = element.scrollHeight; });
   await expect.poll(() => diff.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
-  await expect(diff.locator(".diff-row").last()).toBeInViewport();
+  await expect(diff.locator("code [data-line-type]").last()).toBeInViewport();
   await diff.evaluate(element => { element.scrollTop = 0; });
 
-  const changedRow = page.locator(".diff-row.changed").first();
-  await changedRow.hover();
-  await changedRow.locator(".num button").last().click();
+  const changedLineNumber = page.locator('.diffai-file-diff [data-line-type="change-addition"][data-column-number]').first();
+  await changedLineNumber.hover();
+  await page.locator(".diffai-file-diff [data-utility-button]").click();
   await page.locator(".comment-editor textarea").fill("Playwrightからの行コメント");
   await page.locator(".comment-editor button").filter({ hasText: "追加" }).click();
   await expect(page.locator(".line-comment")).toContainText("Playwrightからの行コメント");
@@ -134,26 +138,27 @@ test("狭い画面でもファイル一覧とdiffを操作できる", async ({ p
   await page.locator(".tree-file").filter({ hasText: "long-file.ts" }).click();
   await expect(page.locator(".chat")).toHaveCount(0);
   await expect(page.locator(".diff")).toBeVisible();
-  await expect(page.locator(".diff-row.changed").first()).toBeVisible();
+  await expect(page.locator('.diffai-file-diff [data-line-type="change-addition"]').first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "一列" })).toHaveClass(/active/);
 });
 
-test("GitHub互換grammarで複数言語の構文をハイライトする", async ({ page }) => {
+test("DiffsのShikiで複数言語の構文をハイライトする", async ({ page }) => {
   await page.goto("/");
   await page.locator(".target select").selectOption("uncommitted");
   await expect(page.locator("header .status")).toContainText("review: 未コミットの変更");
   await expect(page.locator(".tree-file")).toHaveCount(6);
 
   const cases = [
-    { file: "StudyDict.tla", selector: ".pl-k", token: "CONSTANTS" },
-    { file: "long-file.ts", selector: ".pl-k", token: "export" },
-    { file: "README.md", selector: ".pl-mh", token: "Highlight fixture" },
-    { file: "config.json", selector: ".pl-ent", token: '"enabled"' },
-    { file: "Example.swift", selector: ".pl-k", token: "struct" },
+    { file: "StudyDict.tla", token: "CONSTANTS" },
+    { file: "long-file.ts", token: "export" },
+    { file: "README.md", token: "Highlight fixture" },
+    { file: "config.json", token: '"enabled"' },
+    { file: "Example.swift", token: "struct" },
   ];
   for (const item of cases) {
     await page.locator(".tree-file").filter({ hasText: item.file }).click();
     await expect(page.locator(".title h2")).toContainText(item.file);
-    await expect(page.locator(`.diff ${item.selector}`).filter({ hasText: item.token }).first()).toBeVisible();
+    await expect(page.locator(".diffai-file-diff span[style]").filter({ hasText: item.token }).first()).toBeVisible();
   }
 });
 

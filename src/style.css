@@ -212,50 +212,39 @@ article {
   overflow: auto;
   flex: 1 1 0;
   min-height: 0;
-  font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   overscroll-behavior: contain;
   background: #ffffff;
 }
-.diff-row {
-  display: grid;
-  grid-template-columns: 54px minmax(260px, 1fr) 54px minmax(260px, 1fr);
-  min-height: 20px;
-  line-height: 20px;
+.diff-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #d8dee4;
+  background: #f6f8faf2;
+  backdrop-filter: blur(6px);
 }
-.diff-row .num {
-  text-align: right;
-  padding: 0 8px;
-  color: #6e7781;
-  background: #f6f8fa;
-  user-select: none;
-  border-right: 1px solid #d8dee4;
-  position: relative;
+.diff-toolbar button {
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  padding: 4px 9px;
+  background: #ffffff;
+  color: #57606a;
+  cursor: pointer;
+  font-size: 11px;
+}
+.diff-toolbar button:hover { background: #f3f4f6; color: #24292f; }
+.diff-toolbar button.active { border-color: #0969da; background: #ddf4ff; color: #0969da; }
+.diffai-file-diff {
+  display: block;
+  min-width: 100%;
   font-size: 12px;
 }
-.diff-row .num button {
-  display: none;
-  position: absolute;
-  left: 4px;
-  top: 1px;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: 1px solid #0969da;
-  border-radius: 50%;
-  background: #ffffff;
-  color: #0969da;
-  cursor: pointer;
-}
-.diff-row:hover .num button { display: block; }
-.diff pre {
-  margin: 0;
-  padding: 0 10px;
-  white-space: pre-wrap;
-  border-right: 1px solid #d8dee4;
-  color: #24292f;
-}
-.diff pre.removed { background: #ffebe9; color: #82071e; }
-.diff pre.added { background: #dafbe1; color: #116329; }
+/* @pierre/diffs makes line numbers interactive through onLineNumberClick. */
+.diffai-file-diff::part(line-number) { cursor: pointer; }
 
 .line-comment {
   margin: 8px 16px;
