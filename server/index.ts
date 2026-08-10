@@ -126,8 +126,10 @@ async function gitContent(spec: string) {
     return isBinary(stdout) ? decodeContent(stdout) : stdout.toString("utf8").trimEnd();
   } catch { return ""; }
 }
+async function hasHead() { try { await git(["rev-parse", "--verify", "--quiet", "HEAD"]); return true; } catch { return false; } }
 async function listCommits(): Promise<GitCommit[]> {
-  const output = await git(["log", "-30", "--date=iso-strict", "--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%ad"]);
+  let output = "";
+  try { output = await git(["log", "-30", "--date=iso-strict", "--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%ad"]); } catch { /* A repository without commits has no log. */ }
   return output ? output.split("\n").map(line => { const [hash, shortHash, subject, author, date] = line.split("\x1f"); return { hash, shortHash, subject, author, date }; }) : [];
 }
 async function listRefs(): Promise<GitRef[]> {
@@ -139,7 +141,7 @@ async function loadGitReview(target: string, compareWith?: string) {
   const lines = (value: string) => value ? value.split("\n").filter(Boolean) : [];
   if (target === "working") { names = [...new Set([...lines(await git(["diff", "--name-only"])), ...lines(await git(["ls-files", "--others", "--exclude-standard"]))])]; label = "未ステージの変更"; }
   else if (target === "staged") { names = lines(await git(["diff", "--cached", "--name-only"])); label = "ステージ済みの変更"; }
-  else if (target === "uncommitted") { names = [...new Set([...lines(await git(["diff", "HEAD", "--name-only"])), ...lines(await git(["ls-files", "--others", "--exclude-standard"]))])]; label = "未コミットの変更"; }
+  else if (target === "uncommitted") { const tracked = (await hasHead()) ? lines(await git(["diff", "HEAD", "--name-only"])) : lines(await git(["ls-files"])); names = [...new Set([...tracked, ...lines(await git(["ls-files", "--others", "--exclude-standard"]))])]; label = "未コミットの変更"; }
   else if (target === "compare" && compareWith) { const [base, head] = compareWith.split("\x1f"); names = lines(await git(["diff", "--name-only", base, head])); label = `${base} … ${head}`; }
   else { const hash = target === "latest" ? "HEAD" : target; names = lines(await git(["diff-tree", "--root", "--no-commit-id", "--name-only", "-r", hash])); label = await git(["show", "-s", "--format=%h %s", hash]); }
   names = names.filter(file => file !== ".diffai/review-replies.json");
