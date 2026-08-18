@@ -1,9 +1,23 @@
 ---
 name: diffai-review
-description: diffaiで変更レビューを起動し、ブラウザでのレビュー完了後にDIFFAI_REVIEW_RESULTを受け取って反応する。ユーザーがdiffaiを起動して、変更を見たい、レビューしたい、レビュー結果を返したい、Piからdiffaiを使いたいと言った時に使う。
+description: diffaiで変更レビューを起動し、ブラウザでのレビュー完了後にDIFFAI_REVIEW_RESULTを受け取って修正・返信・再レビューを繰り返す。ユーザーがdiffaiを起動して、変更を見たい、レビューしたい、レビュー結果を返したい、PiやClaude Codeからdiffaiを使いたいと言った時に使う。
 ---
 
 # diffai review
+
+## Piでの推奨起動
+
+Pi packageとしてインストール済みなら、ユーザーは次を一度実行する:
+
+```text
+/diffai-review
+```
+
+このコマンドは非同期レビュー・修正ループを開始する。ブラウザの指摘は同じPiセッションへ自動送信され、Piの修正完了後に同じタブが自動更新される。承認されるまでユーザーがレビューを再起動する必要はない。
+
+## Claude Codeおよび汎用CLIでの起動
+
+Claude Code pluginでは `/diffai:review` コマンドを使う。コマンドがない環境では以下のフォアグラウンドCLIを使う。レビューで修正依頼を受けた場合は、修正・返信ファイル更新後に同じコマンドを**自発的に再実行し、承認されるまでループする**。ユーザーへ再実行を依頼しない。
 
 ## 絶対ルール
 
@@ -62,6 +76,8 @@ DIFFAI_REVIEW_RESULT={...}
 - `decision: "approved"` の場合: 承認されたことをユーザーへ報告する。
 - `decision: "changes_requested"` の場合: `reviews`、`comments`、`fileFeedback`、`feedback` を読み、指摘に沿って修正する。
 - 修正・返答後は、結果JSONの `replyFile`（通常 `.diffai/review-replies.json`）へ `replyFormat` に従って返信を書く。次回diffai起動時にUIへ表示される。
+- Claude Codeまたは汎用CLIでは、修正と返信を書いた直後にdiffaiを再実行する。`approved` になるまで修正→再レビューを継続する。
+- Piの `/diffai-review` ループ中は拡張が再レビューを自動起動するため、bashから重ねて起動しない。
 - JSONが出ていない場合: 起動失敗、ブラウザ未完了、タイムアウト、誤ってバックグラウンド化した可能性を確認する。
 
 ## 返信ファイル

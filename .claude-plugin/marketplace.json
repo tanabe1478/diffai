@@ -1,0 +1,13 @@
+{
+  "name": "diffai",
+  "owner": {
+    "name": "tanabe1478"
+  },
+  "plugins": [
+    {
+      "name": "diffai",
+      "source": ".",
+      "description": "Review Claude Code changes in a browser and iterate on feedback until approval"
+    }
+  ]
+}

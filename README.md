@@ -23,9 +23,9 @@ npm run dev -- --cwd /path/to/project
 
 diffai本体はPi SDKやPiの認証・モデル設定に依存しません。Git差分を読み、レビュー結果を標準出力へ返すだけです。
 
-## 任意: Pi packageとしてインストール
+## Piとのインタラクティブなレビュー
 
-Piからdiffaiを使う場合に、使い方を覚えさせ、誤ったバックグラウンド起動を防ぐには、このリポジトリをpi packageとしてインストールできます。diffai本体の実行にPiは不要です。
+Pi packageとしてインストールすると、ブラウザと現在のPiセッションをつなぐレビュー・修正ループを利用できます。diffai本体の実行にPiは不要です。
 
 ```bash
 pi install git:github.com/tanabe1478/diffai
@@ -37,10 +37,36 @@ pi install git:github.com/tanabe1478/diffai
 pi install /path/to/diffai
 ```
 
+インストール後、Piで次を一度実行します。
+
+```text
+/diffai-review
+```
+
+ブラウザから修正を依頼すると、結果が同じPiセッションへ自動送信されます。Piの修正ターンが完了すると同じブラウザタブへ更新後のdiffが自動で読み込まれ、承認されるまで繰り返します。
+
 インストールすると次が有効になります。
 
-- `diffai-review` skill: diffaiをフォアグラウンドで起動し、`DIFFAI_REVIEW_RESULT` を読んで反応する手順
-- `diffai-foreground-guard` extension: diffaiを `&` や stdout リダイレクト付きで起動しようとしたbash実行をブロック
+- `/diffai-review`: 非同期のレビュー・修正・再レビューのループ
+- `diffai-review` skill: PiおよびClaude Codeでレビュー結果に対応する手順
+- `diffai-foreground-guard` extension: diffaiを `&` やstdoutリダイレクト付きで起動しようとしたbash実行をブロック
+
+## Claude Codeで使う
+
+Claude Code pluginとしてインストールできます。
+
+```bash
+claude plugin marketplace add tanabe1478/diffai
+claude plugin install diffai@diffai
+```
+
+その後、Claude Codeでプラグインコマンドを実行します。
+
+```text
+/diffai:review
+```
+
+Claude CodeではCLIのレビュー結果を受け取り、指摘の修正、`.diffai/review-replies.json`への返信、同じタブでの再レビューを承認まで自動で繰り返します。Claude Codeの外部メッセージ注入APIには依存せず、プラグインコマンド内のフォアグラウンドCLIループとして動作します。
 
 ## レビュー対象
 
