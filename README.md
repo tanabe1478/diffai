@@ -48,8 +48,10 @@ pi install /path/to/diffai
 インストールすると次が有効になります。
 
 - `/diffai-review`: 非同期のレビュー・修正・再レビューのループ
-- `diffai-review` skill: PiおよびClaude Codeでレビュー結果に対応する手順
-- `diffai-foreground-guard` extension: diffaiを `&` やstdoutリダイレクト付きで起動しようとしたbash実行をブロック
+- `/diffai-status`: 現在のreviewing / waiting_for_agent / ended / idleとreviewIdを表示
+- `/diffai-cancel`: 実行中のレビューを明示的にキャンセル（子プロセスも有限時間で停止）
+- `diffai` skill: PiおよびClaude Codeでレビュー結果に対応する手順
+- `diffai` extension: diffaiを `&` やstdoutリダイレクト付きで起動しようとしたbash実行をブロックし、レビュー状態をPiセッションへ保存してfooterへ表示
 
 ## Claude Codeで使う
 
@@ -105,4 +107,6 @@ Claude CodeではCLIのレビュー結果を受け取り、指摘の修正、`.d
 
 ## 仕組み
 
-diffaiはGit差分をレビュー用データとして読み込み、ブラウザUIでの判断・コメントを `DIFFAI_REVIEW_RESULT=...` として標準出力へ返します。呼び出し元エージェントはそのJSONを読んで、修正やコメント返信を行います。
+diffaiはGit差分をレビュー用データとして読み込み、ブラウザUIでの判断・コメントを既存契約の一行 `DIFFAI_REVIEW_RESULT={...}` として標準出力へ返します。`reviewId`も結果へ含まれ、Pi拡張は同じIDで同じブラウザタブへ再レビューします。呼び出し元エージェントはそのJSONを読んで、修正やコメント返信を行います。
+
+同じcwdでレビューを交代すると、各CLI waiterは`expectedReviewId`をサーバーへ渡します。古いwaiterはサーバーから409の`review_conflict`を受け、診断を表示して非zero終了します。これにより別レビューの結果を誤って受け取りません。

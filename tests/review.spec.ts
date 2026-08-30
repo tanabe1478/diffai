@@ -204,6 +204,19 @@ test("バイナリファイルは文字化けせずプレースホルダ表示�
   }
 });
 
+test("同じcwdでreviewIdが交代すると古いwaiter向けAPIは明示競合を返す", async ({ request }) => {
+  const state = await (await request.get("/api/state")).json() as { reviewId: string };
+  const reload = await request.post("/api/reload", { data: { reviewId: "new-review-for-conflict-test" } });
+  expect(reload.ok()).toBeTruthy();
+  const conflict = await request.get(`/api/review-result?after=0&expectedReviewId=${encodeURIComponent(state.reviewId)}`);
+  expect(conflict.status()).toBe(409);
+  expect(await conflict.json()).toEqual({
+    error: "review_conflict",
+    expectedReviewId: state.reviewId,
+    actualReviewId: "new-review-for-conflict-test",
+  });
+});
+
 test("同じブラウザで完了後の返信確認と再レビューができる", async ({ page, request }) => {
   await page.goto("/");
   await expect(page.getByRole("button", { name: "レビューを完了" })).toBeEnabled();
