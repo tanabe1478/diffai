@@ -94,11 +94,15 @@ aside h3 small {
 
 .progress {
   margin: 12px;
-  padding: 8px;
+  padding: 10px;
   background: #f6f8fa;
   border: 1px solid #d8dee4;
   border-radius: 6px;
 }
+.progress-label { display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; color: #57606a; font-size: 12px; }
+.progress-label b { color: #24292f; }
+.progress-track { height: 5px; margin-bottom: 10px; background: #eaeef2; border-radius: 999px; overflow: hidden; }
+.progress-track div { height: 100%; background: #0969da; border-radius: inherit; transition: width .2s ease; }
 .progress button {
   width: 100%;
   border: 1px solid #1f883d;
@@ -151,7 +155,9 @@ aside h3 small {
 }
 .tree-file i.approved { background: #6e7781; }
 .tree-file i.rejected { background: #cf222e; }
-.tree-file span { overflow: hidden; text-overflow: ellipsis; }
+.tree-file span { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.viewed-mark { width: 16px; flex: none; color: #1a7f37; font-size: 13px; text-align: center; font-weight: 600; }
+.viewed-mark:not(.is-viewed) { color: #d0d7de; }
 .tree-file small {
   display: block;
   color: #6e7781;
@@ -169,23 +175,56 @@ article {
   flex-direction: column;
   background: #ffffff;
 }
-.review-summary {
-  border-bottom: 1px solid #d8dee4;
-  background: #f6f8fa;
-  max-height: 35%;
-  overflow: auto;
+.review-content {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
 }
-.review-summary summary { padding: 10px 16px; color: #0969da; cursor: pointer; font-size: 13px; }
-.review-summary > div { padding: 0 16px 14px; }
-.review-summary section b { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.review-summary section p { margin: 4px 0 9px; color: #57606a; white-space: pre-wrap; }
-.review-summary > div > button {
+.review-main {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.review-summary {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border-left: 1px solid #d8dee4;
+  background: #f6f8fa;
+}
+.review-summary summary { position: sticky; top: 0; z-index: 1; padding: 12px 14px; border-bottom: 1px solid #d8dee4; background: #f6f8fa; color: #0969da; cursor: default; font-size: 13px; font-weight: 600; }
+.review-summary-body { padding: 10px 12px 14px; }
+.summary-empty { margin: 4px 2px 14px; color: #6e7781; line-height: 1.5; font-size: 12px; }
+.summary-file { margin-bottom: 12px; }
+.summary-file-button, .summary-item {
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #24292f;
+  text-align: left;
+  cursor: pointer;
+}
+.summary-file-button { padding: 5px 6px; }
+.summary-file-button:hover, .summary-item:hover { background: #ddf4ff; }
+.summary-file-button b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.summary-file-button span { display: block; margin-top: 3px; color: #0969da; font-size: 10px; }
+.summary-item { margin-top: 3px; padding: 7px 8px 8px 14px; border-left: 3px solid #0969da; }
+.summary-item strong { display: block; color: #57606a; font-size: 11px; }
+.summary-item p { margin: 4px 0 0; color: #57606a; white-space: pre-wrap; font-size: 12px; line-height: 1.4; }
+.summary-item .reply { font-size: 11px; }
+.return-review {
   border: 1px solid #d0d7de;
   border-radius: 6px;
   background: #ffffff;
   color: #24292f;
-  padding: 7px 12px;
+  padding: 7px 10px;
+  cursor: pointer;
+  font-size: 12px;
 }
+.return-review:hover { background: #f3f4f6; }
 
 .title {
   padding: 12px 18px;
@@ -207,6 +246,11 @@ article {
 }
 .title em.approved { border-color: #2da44e; color: #1a7f37; }
 .title em.rejected { border-color: #cf222e; color: #cf222e; }
+.viewing-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.viewing-actions button { border: 1px solid #d0d7de; border-radius: 6px; background: #ffffff; color: #57606a; padding: 5px 8px; cursor: pointer; font-size: 11px; }
+.viewing-actions button:hover { border-color: #0969da; color: #0969da; }
+.viewing-actions button.viewed.active { border-color: #1a7f37; background: #dafbe1; color: #116329; }
+.viewing-actions button:disabled { opacity: .5; cursor: default; }
 
 .diff {
   overflow: auto;
@@ -374,18 +418,25 @@ textarea:focus, select:focus, input:focus { border-color: #0969da; box-shadow: 0
 
 .completion-overlay {
   position: fixed;
-  inset: 0;
+  top: 68px;
+  right: 20px;
   z-index: 20;
-  background: #ffffffee;
+  width: min(390px, calc(100vw - 40px));
+  padding: 12px 14px;
+  background: #ffffff;
+  border: 1px solid #54aeef;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px #8c959f44;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
-  gap: 12px;
+  gap: 10px;
+  flex-wrap: wrap;
+  pointer-events: none;
 }
-.completion-overlay b { font-size: 22px; color: #24292f; }
-.completion-overlay span { color: #57606a; }
-.spinner {
+.completion-overlay b { flex: 0 1 auto; font-size: 13px; color: #24292f; }
+.completion-overlay span { flex: 1 1 180px; min-width: 0; color: #57606a; font-size: 12px; }
+.spinner { flex: none;
   width: 36px;
   height: 36px;
   border: 4px solid #d8dee4;
@@ -394,16 +445,17 @@ textarea:focus, select:focus, input:focus { border-color: #0969da; box-shadow: 0
   animation: spin .8s linear infinite;
 }
 .completion-overlay .check {
-  width: 48px;
-  height: 48px;
+  width: 24px;
+  height: 24px;
+  flex: none;
   border-radius: 50%;
   display: grid;
   place-items: center;
   background: #1f883d;
   color: white;
-  font-size: 28px;
+  font-size: 16px;
 }
-.completion-overlay.done { background: #f6fff8f2; }
+.completion-overlay.done { background: #f6fff8; border-color: #2da44e; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .error {
@@ -421,4 +473,12 @@ textarea:focus, select:focus, input:focus { border-color: #0969da; box-shadow: 0
 
 @media (max-width: 900px) {
   .layout { grid-template-columns: 220px 1fr; }
+  .review-content { grid-template-columns: minmax(0, 1fr) 250px; }
+  .title { padding-left: 12px; padding-right: 12px; }
+}
+
+@media (max-width: 640px) {
+  .review-content { grid-template-columns: minmax(0, 1fr) 220px; }
+  .viewing-actions { gap: 3px; }
+  .viewing-actions .next-unviewed { display: none; }
 }

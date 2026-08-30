@@ -73,6 +73,35 @@ test("固定fixtureの未コミットdiffをスクロールし、変更行へコ
   await expect(page.locator(".line-comment")).toHaveCount(0);
 });
 
+test("閲覧進捗と常設コメントサイドバーからファイルを移動できる", async ({ page }) => {
+  await page.goto("/");
+  await page.locator(".target select").selectOption("uncommitted");
+  await expect(page.locator("header .status")).toContainText("review: 未コミットの変更");
+  await expect(page.locator(".review-summary")).toBeVisible();
+  await expect(page.locator(".progress-label")).toContainText("0 / 6 ファイル");
+
+  const firstFile = page.locator(".tree-file").first();
+  const firstPath = await firstFile.locator("small").textContent();
+  await firstFile.click();
+  await expect(page.locator(".title h2")).toContainText(firstPath!);
+  await page.getByRole("button", { name: "閲覧済みにする", exact: true }).click();
+  await expect(page.locator(".progress-label")).toContainText("1 / 6 ファイル");
+  await expect(page.locator(".viewing-actions .viewed")).toHaveClass(/active/);
+
+  await page.getByRole("button", { name: "次の未閲覧ファイル" }).click();
+  await expect(page.locator(".title h2")).not.toContainText(firstPath!);
+  const feedbackPath = await page.locator(".title h2").textContent();
+  await page.locator("#feedback").fill("サイドバーから参照するフィードバック");
+  await expect(page.locator(".review-summary")).toContainText("サイドバーから参照するフィードバック");
+  await page.locator(".summary-file-button").filter({ hasText: feedbackPath! }).click();
+  await expect(page.locator(".title h2")).toContainText(feedbackPath!);
+
+  await page.reload();
+  await page.locator(".target select").selectOption("uncommitted");
+  await expect(page.locator(".progress-label")).toContainText("1 / 6 ファイル");
+  await expect(page.locator(".diff")).toBeVisible();
+});
+
 test("保存済みapprovedは復元せず修正依頼できる", async ({ page }) => {
   await page.goto("/");
   const cwd = (await page.locator("header .workspace").textContent())!;
@@ -182,6 +211,8 @@ test("同じブラウザで完了後の返信確認と再レビューができ�
   await expect(page.locator(".completion-overlay")).toContainText("レビュー結果を送信中");
   await expect(page.locator(".completion-overlay")).toContainText("このタブのままお待ちください");
   await expect(page.locator(".completion-overlay")).not.toContainText("Pi");
+  await expect(page.locator(".diff")).toBeVisible();
+  await expect(page.locator(".review-summary")).toBeVisible();
   await expect(page.locator("header .status")).toContainText("completed: approved");
 
   const repliesPath = path.resolve("tests/.tmp/workspace/.diffai/review-replies.json");

@@ -16,6 +16,7 @@ function App() {
   const [commits, setCommits] = useState<GitCommit[]>([]), [refs, setRefs] = useState<GitRef[]>([]), [reviewTarget, setReviewTarget] = useState("latest");
   const [compareBase, setCompareBase] = useState("HEAD~1"), [compareHead, setCompareHead] = useState("HEAD");
   const [savedStatuses, setSavedStatuses] = useState<Record<string, SavedStatus>>({});
+  const [viewed, setViewed] = useState<Record<string, boolean>>({});
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
   const [replies, setReplies] = useState<ReviewReply[]>([]), [reviewStorageKey, setReviewStorageKey] = useState("");
   const [comments, setComments] = useState<LineComment[]>([]), [commenting, setCommenting] = useState<Pick<LineComment, "side" | "line">>();
@@ -35,7 +36,9 @@ function App() {
         const saved = JSON.parse(localStorage.getItem(key) ?? "{}");
         setComments((saved.comments ?? []).map((comment: LineComment & { id?: string }) => ({ ...comment, id: comment.id ?? crypto.randomUUID() })));
         setFeedback(saved.feedback ?? {}); setSavedStatuses(saved.statuses ?? {});
-      } catch { setComments([]); setFeedback({}); setSavedStatuses({}); }
+        const savedViewed = saved.viewed ?? {};
+        setViewed(Array.isArray(savedViewed) ? Object.fromEntries(savedViewed.map((id: string) => [id, true])) : savedViewed);
+      } catch { setComments([]); setFeedback({}); setSavedStatuses({}); setViewed({}); }
       hydrated.current = true;
     };
     const socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`); ws.current = socket;
@@ -49,7 +52,7 @@ function App() {
       else if (ev.type === "error") { setError(ev.message); setCompletion("idle"); }
     }; return () => socket.close();
   }, []);
-  useEffect(() => { if (!hydrated.current || !reviewStorageKey) return; localStorage.setItem(reviewStorageKey, JSON.stringify({ comments, feedback, statuses: savedStatuses })); }, [comments, feedback, savedStatuses, reviewStorageKey]);
+  useEffect(() => { if (!hydrated.current || !reviewStorageKey) return; localStorage.setItem(reviewStorageKey, JSON.stringify({ comments, feedback, statuses: savedStatuses, viewed })); }, [comments, feedback, savedStatuses, viewed, reviewStorageKey]);
   const statusOf = (proposal: Proposal) => {
     const saved = savedStatuses[proposal.id];
     if (saved?.status === "rejected" && saved.before === proposal.before && saved.after === proposal.after) return saved.status;
@@ -58,12 +61,25 @@ function App() {
   const fileTree = useMemo(() => buildFileTree(proposals), [proposals]);
   const toggleDir = (path: string) => setCollapsedDirs(items => { const next = new Set(items); if (next.has(path)) next.delete(path); else next.add(path); return next; });
   const current = proposals.find(p => p.id === selected);
-  const currentFileReply = current ? replies.find(reply => reply.commentId === `feedback:${current.id}`) : undefined;
+  const activeProposalIds = useMemo(() => new Set(proposals.map(proposal => proposal.id)), [proposals]);
+  const activeComments = useMemo(() => comments.filter(comment => activeProposalIds.has(comment.proposalId)), [activeProposalIds, comments]);
+  const activeFeedback = useMemo(() => Object.fromEntries(
+    Object.entries(feedback).filter(([proposalId]) => activeProposalIds.has(proposalId)),
+  ), [activeProposalIds, feedback]);
+  const viewedCount = proposals.filter(proposal => viewed[proposal.id]).length;
+  const toggleViewed = () => { if (current) setViewed(items => ({ ...items, [current.id]: !items[current.id] })); };
+  const nextUnviewed = () => {
+    if (!proposals.length) return;
+    const currentIndex = current ? proposals.findIndex(proposal => proposal.id === current.id) : -1;
+    const ordered = [...proposals.slice(currentIndex + 1), ...proposals.slice(0, currentIndex + 1)];
+    const next = ordered.find(proposal => !viewed[proposal.id]);
+    if (next) setSelected(next.id);
+  };
   const review = (decision: string) => { if (!current) return; const general = (feedback[current.id] ?? "").trim(); const lines = comments.filter(c => c.proposalId === current.id).map(c => `${current.path}:${c.side === "old" ? "旧" : "新"}L${c.line}\n${c.body}`).join("\n\n"); const reviewFeedback = [general, lines].filter(Boolean).join("\n\n"); ws.current?.send(JSON.stringify({ type: "review", id: current.id, decision, feedback: reviewFeedback })); };
   const selectReviewTarget = (target: string) => { if (target === "compare") setReviewTarget(target); else loadReview(target); };
   const loadReview = (target = reviewTarget) => { setReviewTarget(target); ws.current?.send(JSON.stringify({ type: "load_review", target, compareWith: target === "compare" ? `${compareBase}\x1f${compareHead}` : undefined })); };
-  const completeReview = () => { if (completion !== "idle") return; const completed = Object.fromEntries(proposals.map(proposal => [proposal.id, statusOf(proposal) === "rejected" ? "rejected" as const : "approved" as const])); const rejected = Object.fromEntries(proposals.filter(proposal => completed[proposal.id] === "rejected").map(proposal => [proposal.id, { status: "rejected" as const, before: proposal.before, after: proposal.after }])); setSavedStatuses(items => ({ ...items, ...rejected })); setCompletion("sending"); ws.current?.send(JSON.stringify({ type: "complete_review", comments, feedback, reviews: proposals.map(proposal => ({ id: proposal.id, status: completed[proposal.id] })) })); };
-  const sendAllFeedback = () => { if (!comments.length && !Object.values(feedback).some(Boolean)) { setError("送信するレビューコメントがありません"); return; } setError("レビューコメントは「レビューを完了」で呼び出し元へ返されます"); };
+  const completeReview = () => { if (completion !== "idle") return; const completed = Object.fromEntries(proposals.map(proposal => [proposal.id, statusOf(proposal) === "rejected" ? "rejected" as const : "approved" as const])); const rejected = Object.fromEntries(proposals.filter(proposal => completed[proposal.id] === "rejected").map(proposal => [proposal.id, { status: "rejected" as const, before: proposal.before, after: proposal.after }])); setSavedStatuses(items => ({ ...items, ...rejected })); setCompletion("sending"); ws.current?.send(JSON.stringify({ type: "complete_review", comments: activeComments, feedback: activeFeedback, reviews: proposals.map(proposal => ({ id: proposal.id, status: completed[proposal.id] })) })); };
+  const sendAllFeedback = () => { if (!activeComments.length && !Object.values(activeFeedback).some(Boolean)) { setError("送信するレビューコメントがありません"); return; } setError("レビューコメントは「レビューを完了」で呼び出し元へ返されます"); };
   const saveComment = () => {
     if (!current || !commenting || !commentBody.trim()) return;
     const source = commenting.side === "old" ? current.before : current.after;
@@ -72,16 +88,18 @@ function App() {
     setCommenting(undefined); setCommentBody("");
   };
   return <main><header><b>diff<span>ai</span></b><div className="workspace">{cwd}</div><div className={`status ${status}`}>● {status}</div></header>
-    {waitMode && completion === "idle" && <div className="waiting-banner"><b>レビュー完了待ちです</b><span>問題なければ左側の「レビューを完了」で一括承認できます。</span></div>}{completion === "sending" && <div className="completion-overlay"><div className="spinner"/><b>レビュー結果を送信中…</b><span>このままお待ちください</span></div>}{completion === "completed" && <div className="completion-overlay done"><div className="check">✓</div><b>レビュー結果を呼び出し元へ送信しました</b><span>このタブのままお待ちください。修正と返信が届くと再レビュー画面へ切り替わります。</span></div>}
+    {waitMode && completion === "idle" && <div className="waiting-banner"><b>レビュー完了待ちです</b><span>問題なければ左側の「レビューを完了」で一括承認できます。</span></div>}{completion === "sending" && <div className="completion-overlay" role="status" aria-live="polite"><div className="spinner"/><b>レビュー結果を送信中…</b><span>このままお待ちください</span></div>}{completion === "completed" && <div className="completion-overlay done" role="status" aria-live="polite"><div className="check">✓</div><b>レビュー結果を呼び出し元へ送信しました</b><span>このタブのままお待ちください。修正と返信が届くと再レビュー画面へ切り替わります。</span></div>}
     {error && <div className="error" onClick={() => setError("")}>{error} ×</div>}
-    <section className="layout"><aside><h3>レビュー対象</h3><div className="target"><select value={reviewTarget} onChange={e => selectReviewTarget(e.target.value)}><option value="latest">最新コミット (HEAD)</option><option value="uncommitted">未コミットすべて</option><option value="staged">ステージ済み</option><option value="working">未ステージ</option><option value="compare">ブランチ・コミット間比較</option><optgroup label="最近のコミット">{commits.map(c => <option value={c.hash} key={c.hash}>{c.shortHash} {c.subject}</option>)}</optgroup></select><button onClick={() => loadReview()}>読込</button></div>{reviewTarget === "compare" && <div className="compare"><input list="git-refs" value={compareBase} onChange={e => setCompareBase(e.target.value)} aria-label="比較元"/><span>→</span><input list="git-refs" value={compareHead} onChange={e => setCompareHead(e.target.value)} aria-label="比較先"/><button onClick={() => loadReview("compare")}>比較</button><datalist id="git-refs">{refs.map(ref => <option value={ref.name} key={ref.name}/>)}</datalist></div>}<div className="progress"><button className="complete" onClick={completeReview} disabled={completion !== "idle"}>{completion === "sending" ? "送信中…" : completion === "completed" ? "送信しました" : "レビューを完了"}</button></div><h3>変更ファイル <small>{proposals.length}</small></h3><FileTree nodes={fileTree} selected={selected} statusOf={statusOf} onSelect={setSelected} collapsed={collapsedDirs} onToggle={toggleDir}/>{!proposals.length && <p className="empty">該当する変更はありません</p>}</aside>
+    <section className="layout"><aside><h3>レビュー対象</h3><div className="target"><select value={reviewTarget} onChange={e => selectReviewTarget(e.target.value)}><option value="latest">最新コミット (HEAD)</option><option value="uncommitted">未コミットすべて</option><option value="staged">ステージ済み</option><option value="working">未ステージ</option><option value="compare">ブランチ・コミット間比較</option><optgroup label="最近のコミット">{commits.map(c => <option value={c.hash} key={c.hash}>{c.shortHash} {c.subject}</option>)}</optgroup></select><button onClick={() => loadReview()}>読込</button></div>{reviewTarget === "compare" && <div className="compare"><input list="git-refs" value={compareBase} onChange={e => setCompareBase(e.target.value)} aria-label="比較元"/><span>→</span><input list="git-refs" value={compareHead} onChange={e => setCompareHead(e.target.value)} aria-label="比較先"/><button onClick={() => loadReview("compare")}>比較</button><datalist id="git-refs">{refs.map(ref => <option value={ref.name} key={ref.name}/>)}</datalist></div>}<div className="progress"><div className="progress-label"><b>閲覧進捗</b><span>{viewedCount} / {proposals.length} ファイル</span></div><div className="progress-track"><div style={{ width: proposals.length ? `${viewedCount / proposals.length * 100}%` : "0%" }}/></div><button className="complete" onClick={completeReview} disabled={completion !== "idle"}>{completion === "sending" ? "送信中…" : completion === "completed" ? "送信しました" : "レビューを完了"}</button></div><h3>変更ファイル <small>{proposals.length}</small></h3><FileTree nodes={fileTree} selected={selected} viewed={viewed} statusOf={statusOf} onSelect={setSelected} collapsed={collapsedDirs} onToggle={toggleDir}/>{!proposals.length && <p className="empty">該当する変更はありません</p>}</aside>
       <ReviewPane
         proposals={proposals}
         current={current}
         statusOf={statusOf}
+        viewed={viewed}
         comments={comments}
         replies={replies}
         feedback={feedback}
+        onSelectProposal={setSelected}
         commenting={commenting}
         commentBody={commentBody}
         onReturnWithReview={sendAllFeedback}
@@ -91,6 +109,8 @@ function App() {
         onChangeCommentBody={setCommentBody}
         onSaveComment={saveComment}
         onChangeFeedback={(proposalId, body) => setFeedback(items => ({ ...items, [proposalId]: body }))}
+        onToggleViewed={toggleViewed}
+        onNextUnviewed={nextUnviewed}
         onReview={review}
       /></section></main>;
 }

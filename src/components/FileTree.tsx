@@ -5,6 +5,7 @@ import type { FileTreeNode } from "../reviewTypes";
 type Props = {
   nodes: FileTreeNode[];
   selected?: string;
+  viewed: Record<string, boolean>;
   statusOf: (proposal: Proposal) => Proposal["status"];
   onSelect: (id: string) => void;
   collapsed: Set<string>;
@@ -12,7 +13,7 @@ type Props = {
   depth?: number;
 };
 
-export function FileTree({ nodes, selected, statusOf, onSelect, collapsed, onToggle, depth = 0 }: Props) {
+export function FileTree({ nodes, selected, viewed, statusOf, onSelect, collapsed, onToggle, depth = 0 }: Props) {
   return <div className={depth === 0 ? "file-tree" : "tree-children"}>{nodes.map(node => {
     if (node.proposal) {
       return <button
@@ -21,8 +22,9 @@ export function FileTree({ nodes, selected, statusOf, onSelect, collapsed, onTog
         onClick={() => onSelect(node.proposal!.id)}
         key={node.path}
       >
-        <i className={statusOf(node.proposal)}/>
+        <i className={statusOf(node.proposal)} aria-label={`判断: ${statusOf(node.proposal)}`}/>
         <span>{node.name}<small>{node.proposal.path}</small></span>
+        <b className={`viewed-mark ${viewed[node.proposal.id] ? "is-viewed" : ""}`} aria-label={viewed[node.proposal.id] ? "閲覧済み" : "未閲覧"}>{viewed[node.proposal.id] ? "✓" : ""}</b>
       </button>;
     }
 
@@ -36,7 +38,7 @@ export function FileTree({ nodes, selected, statusOf, onSelect, collapsed, onTog
       >
         <span>{isCollapsed ? "▸" : "▾"}</span>{node.name}
       </button>
-      {!isCollapsed && <FileTree nodes={node.children} selected={selected} statusOf={statusOf} onSelect={onSelect} collapsed={collapsed} onToggle={onToggle} depth={depth + 1}/>} 
+      {!isCollapsed && <FileTree nodes={node.children} selected={selected} viewed={viewed} statusOf={statusOf} onSelect={onSelect} collapsed={collapsed} onToggle={onToggle} depth={depth + 1}/>}
     </div>;
   })}</div>;
 }
