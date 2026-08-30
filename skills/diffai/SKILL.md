@@ -1,6 +1,6 @@
 ---
 name: diffai
-description: diffaiで変更レビューを起動し、ブラウザでのレビュー完了後にDIFFAI_REVIEW_RESULTを受け取って修正・返信・再レビューを繰り返す。ユーザーがdiffaiを起動して、変更を見たい、レビューしたい、レビュー結果を返したい、PiやClaude Codeからdiffaiを使いたいと言った時に使う。
+description: diffaiで変更レビューを起動し、ブラウザでのレビュー完了後にschemaVersion 1のbare JSON結果を受け取って修正・返信・再レビューを繰り返す。ユーザーがdiffaiを起動して、変更を見たい、レビューしたい、レビュー結果を返したい、PiやClaude Codeからdiffaiを使いたいと言った時に使う。
 ---
 
 # diffai
@@ -28,12 +28,12 @@ Piに依存しないフォアグラウンドCLIは次の形式で起動する:
 npx github:tanabe1478/diffai --cwd "$PWD"
 ```
 
-レビュー完了時、stdoutには既存契約の一行 `DIFFAI_REVIEW_RESULT={...}` が出力される。`decision` が `changes_requested` なら指摘を修正し、`.diffai/review-replies.json`を更新して同じコマンドを再実行する。CLIをバックグラウンド化したりstdoutをリダイレクトしたりしない。
+レビュー完了時、stdoutには `schemaVersion: 1` のReviewResult bare JSONが一行だけ出力される。URL・workspace・進捗・診断はstderrに出る。`decision` が `changes_requested` なら指摘を修正し、`.diffai/review-replies.json`を更新して同じコマンドを再実行する。CLIをバックグラウンド化したりstdoutをリダイレクトしたりしない。
 
 ## 絶対ルール
 
 - `&`、`nohup`、`disown`、`> logfile 2>&1`、`tee` などでバックグラウンド化・ログファイル化しない。
-- `DIFFAI_REVIEW_RESULT`を受け取ったらJSONを読み、指摘へ対応する。
+- stdoutのbare ReviewResult v1を受け取ったらJSONを読み、指摘へ対応する。schemaVersionがない、未知version、余分なrecordは結果として受理しない。
 - Piの`/diffai-review`ループ中は拡張が同じreviewId・同じブラウザタブで再レビューを起動するため、bashから重ねて起動しない。
 - 同じcwdで別reviewIdが開始された場合、古いCLI waiterは競合診断を出して非zero終了する。別レビューの結果を受け取ったことにして処理を続けない。
 

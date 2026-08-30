@@ -16,6 +16,7 @@
     "extensions",
     "skills",
     "commands",
+    "protocol",
     ".claude-plugin",
     "README.md"
   ],

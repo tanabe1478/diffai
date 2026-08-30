@@ -11,7 +11,7 @@ Review the current working tree with diffai.
    npx github:tanabe1478/diffai --cwd "$PWD"
    ```
 
-2. Read the `DIFFAI_REVIEW_RESULT=...` JSON from stdout.
+2. Read the single bare `schemaVersion: 1` ReviewResult JSON line from stdout. All URL/progress/diagnostic text is on stderr.
 3. If `decision` is `changes_requested`:
    - address every applicable item in `comments`, `fileFeedback`, `feedback`, and rejected `reviews`;
    - run appropriate checks;

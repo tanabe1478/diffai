@@ -26,7 +26,7 @@ export function foregroundGuard(command: string, cwd: string): { block: true; re
   return {
     block: true,
     reason: [
-      "diffai must run in the foreground so the agent receives DIFFAI_REVIEW_RESULT.",
+      "diffai must run in the foreground so the agent receives its single bare ReviewResult v1 JSON line on stdout.",
       "Do not background it or redirect stdout to a log file.",
       "In Pi, prefer the /diffai-review command for an automatic review loop.",
       "Portable fallback: npx github:tanabe1478/diffai --cwd \"$PWD\"",

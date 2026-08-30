@@ -8,7 +8,7 @@ AI coding agentの変更をブラウザで確認し、承認・却下・フィ�
 npx github:tanabe1478/diffai --cwd /path/to/project
 ```
 
-全ファイルの判断後に「レビューを完了」を押すと、標準出力へ `DIFFAI_REVIEW_RESULT=...` が出力され、結果を待っていたCLIプロセスが終了します。ブラウザサーバーは継続するため、タブはそのまま開いておけます。既存の `--wait` は不要です。
+全ファイルの判断後に「レビューを完了」を押すと、標準出力へ versioned bare JSON（`schemaVersion: 1` のReviewResult）が一行だけ出力され、結果を待っていたCLIプロセスが終了します。URL・workspace・待機進捗などの診断はすべて標準エラー出力へ出ます。ブラウザサーバーは継続するため、タブはそのまま開いておけます。既存の `--wait` は不要です。
 
 呼び出し元のエージェントが修正後に同じコマンドを再実行すると、既存のブラウザサーバーへ接続し、同じタブへ新しい差分と返信を読み込みます。次の「レビューを完了」まで新しいCLIプロセスがフォアグラウンドで待機します。
 
@@ -21,7 +21,7 @@ npm install
 npm run dev -- --cwd /path/to/project
 ```
 
-diffai本体はPi SDKやPiの認証・モデル設定に依存しません。Git差分を読み、レビュー結果を標準出力へ返すだけです。
+diffai本体はPi SDKやPiの認証・モデル設定に依存しません。Git差分を読み、`schemaVersion: 1` のReviewResultをbare JSON一行として標準出力へ返すだけです。標準出力に診断やprefixは混在しません。
 
 ## Piとのインタラクティブなレビュー
 
@@ -107,6 +107,6 @@ Claude CodeではCLIのレビュー結果を受け取り、指摘の修正、`.d
 
 ## 仕組み
 
-diffaiはGit差分をレビュー用データとして読み込み、ブラウザUIでの判断・コメントを既存契約の一行 `DIFFAI_REVIEW_RESULT={...}` として標準出力へ返します。`reviewId`も結果へ含まれ、Pi拡張は同じIDで同じブラウザタブへ再レビューします。呼び出し元エージェントはそのJSONを読んで、修正やコメント返信を行います。
+diffaiはGit差分をレビュー用データとして読み込み、ブラウザUIでの判断・コメントを `schemaVersion: 1` のReviewResult bare JSON一行として標準出力へ返します。`reviewId`も結果へ含まれ、Pi拡張はv1 JSONを厳格に解析して同じIDで同じブラウザタブへ再レビューします。URLや進捗などの診断は標準エラー出力へ分離されます。呼び出し元エージェントはそのJSONを読んで、修正やコメント返信を行います。
 
 同じcwdでレビューを交代すると、各CLI waiterは`expectedReviewId`をサーバーへ渡します。古いwaiterはサーバーから409の`review_conflict`を受け、診断を表示して非zero終了します。これにより別レビューの結果を誤って受け取りません。

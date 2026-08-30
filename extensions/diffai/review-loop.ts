@@ -264,10 +264,9 @@ export class ReviewLoop {
 
   private handleResult(ctx: ExtensionContext, result: ReviewResult): void {
     const state = this.state;
-    // Older CLI results did not carry reviewId; accept those while rejecting
-    // an explicitly mismatched id from a concurrent review.
+    // reviewId is mandatory in v1. Never accept a result from another waiter.
     if (!state) return;
-    if (result.reviewId !== undefined && result.reviewId !== state.reviewId) {
+    if (result.reviewId !== state.reviewId) {
       this.transition({ ...state, phase: "ended" });
       this.options.notify(ctx, "diffai returned a result for a different reviewId.", "error");
       return;

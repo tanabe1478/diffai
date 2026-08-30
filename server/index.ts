@@ -11,6 +11,8 @@ import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { WebSocketServer, WebSocket } from "ws";
 import open from "open";
+import type { FileFeedback, ReviewComment, ReviewFeedback, ReviewResult } from "../protocol/index.js";
+import { buildReviewResult, serializeReviewResult, validateReviewResult } from "../protocol/index.js";
 import type { GitCommit, GitRef, Proposal, ReviewReply, ServerEvent } from "../src/types.js";
 
 function arg(name: string) { const i = process.argv.indexOf(`--${name}`); return i >= 0 ? process.argv[i + 1] : undefined; }
@@ -45,8 +47,8 @@ async function waitForServer(port: number) {
   throw new Error("diffai server did not start");
 }
 
-async function waitForReviewResult(port: number, after: number, expectedReviewId: string) {
-  const notice = setInterval(() => console.log("状態: ブラウザでのレビュー完了を待っています…"), 30_000);
+async function waitForReviewResult(port: number, after: number, expectedReviewId: string): Promise<ReviewResult> {
+  const notice = setInterval(() => console.error("状態: ブラウザでのレビュー完了を待っています…"), 30_000);
   notice.unref();
   try {
     while (true) {
@@ -56,9 +58,11 @@ async function waitForReviewResult(port: number, after: number, expectedReviewId
         throw new Error(`diffai review conflict: expected reviewId ${expectedReviewId}, but active reviewId is ${detail.actualReviewId ?? "unknown"}`);
       }
       if (response.status === 200) {
-        const result = await response.json() as { reviewId?: string };
+        const result = validateReviewResult(await response.json());
         if (result.reviewId === expectedReviewId) return result;
         after++;
+      } else if (response.status !== 204) {
+        throw new Error(`diffai review-result request failed: HTTP ${response.status}`);
       }
       await new Promise(resolve => setTimeout(resolve, 250));
     }
@@ -73,7 +77,7 @@ async function runWaiter() {
     after = state.resultCount;
     const response = await fetch(`http://127.0.0.1:${descriptor.port}/api/reload`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reviewId }) });
     if (!response.ok) throw new Error(`diffai reload failed: ${response.status}`);
-    console.log(`diffai: http://127.0.0.1:${descriptor.port}\nworkspace: ${cwd}\n状態: 同じブラウザで再レビュー待ち`);
+    console.error(`diffai: http://127.0.0.1:${descriptor.port}\nworkspace: ${cwd}\n状態: 同じブラウザで再レビュー待ち`);
   } else {
     const port = await availablePort(requestedPort);
     const modulePath = fileURLToPath(import.meta.url);
@@ -83,11 +87,11 @@ async function runWaiter() {
     await waitForServer(port);
     await fs.writeFile(sessionDescriptor, JSON.stringify(descriptor), "utf8");
     const url = `http://127.0.0.1:${port}`;
-    console.log(`diffai: ${url}\nworkspace: ${cwd}\n状態: ブラウザでのレビュー待ち\n操作: 全ファイルを判断し「レビューを完了」を押してください`);
+    console.error(`diffai: ${url}\nworkspace: ${cwd}\n状態: ブラウザでのレビュー待ち\n操作: 全ファイルを判断し「レビューを完了」を押してください`);
     if (!process.argv.includes("--no-open")) await open(url);
   }
   const result = await waitForReviewResult(descriptor.port, after, reviewId);
-  console.log(`DIFFAI_REVIEW_RESULT=${JSON.stringify(result)}`);
+  process.stdout.write(`${serializeReviewResult(result)}\n`);
 }
 
 if (!serveMode) {
@@ -104,7 +108,7 @@ let reviewProposals: Proposal[] = [];
 let commits: GitCommit[] = [];
 let refs: GitRef[] = [];
 const clients = new Set<WebSocket>();
-const reviewResults: unknown[] = [];
+const reviewResults: ReviewResult[] = [];
 
 function send(event: ServerEvent, ws?: WebSocket) {
   const text = JSON.stringify(event);
@@ -221,14 +225,16 @@ wss.on("connection", (ws) => {
         const fileFeedback = items
           .map(item => ({ id: `feedback:${item.id}`, proposalId: item.id, path: item.path, body: feedback[item.id] }))
           .filter(item => typeof item.body === "string" && item.body.trim());
-        const result = {
+        const result = buildReviewResult({
           decision: items.some(item => item.status === "rejected") ? "changes_requested" : "approved",
           reviewId,
-          reviews: items.map(item => ({ id: item.id, path: item.path, status: item.status, feedback: item.feedback })),
-          comments: command.comments ?? [], fileFeedback, feedback,
+          reviews: items.map(item => ({ id: item.id, path: item.path, status: item.status === "rejected" ? "rejected" : "approved", ...(item.feedback === undefined ? {} : { feedback: item.feedback }) })),
+          comments: (command.comments ?? []) as ReviewComment[],
+          fileFeedback: fileFeedback as FileFeedback[],
+          feedback: feedback as ReviewFeedback,
           replyFile: ".diffai/review-replies.json",
           replyFormat: { replies: [{ commentId: "<comment id or fileFeedback id>", status: "fixed|replied|wontfix", body: "<reply shown in diffai>" }] },
-        };
+        });
         reviewResults.push(result);
         setTimeout(() => send({ type: "status", status: "completed", detail: result.decision }), 350);
       } else if (command.type === "load_review") {
@@ -253,10 +259,10 @@ async function availablePort(start: number) {
 const port = await availablePort(requestedPort);
 server.listen(port, "127.0.0.1", async () => {
   const url = `http://127.0.0.1:${dev ? 5173 : port}`;
-  console.log(`diffai: ${url}\nworkspace: ${cwd}`);
-  if (port !== requestedPort) console.log(`port ${requestedPort} は使用中のため ${port} を使用します`);
-  if (waitMode) console.log("状態: ブラウザでのレビュー待ち\n操作: 全ファイルを判断し「レビューを完了」を押してください");
+  console.error(`diffai: ${url}\nworkspace: ${cwd}`);
+  if (port !== requestedPort) console.error(`port ${requestedPort} は使用中のため ${port} を使用します`);
+  if (waitMode) console.error("状態: ブラウザでのレビュー待ち\n操作: 全ファイルを判断し「レビューを完了」を押してください");
   if (!process.argv.includes("--no-open")) await open(url);
 });
-const waitingNotice = waitMode ? setInterval(() => console.log("状態: ブラウザでのレビュー完了を待っています…"), 30_000) : undefined;
+const waitingNotice = waitMode ? setInterval(() => console.error("状態: ブラウザでのレビュー完了を待っています…"), 30_000) : undefined;
 if (waitingNotice) waitingNotice.unref();

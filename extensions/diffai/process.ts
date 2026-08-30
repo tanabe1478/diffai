@@ -55,7 +55,7 @@ export async function stopChildProcess(child: ChildProcess, options: StopOptions
   }
 }
 
-/** Spawn the foreground CLI and collect its stable stdout result marker. */
+/** Spawn the foreground CLI and collect its single bare stdout JSON result. */
 export type DiffaiProcessHandle = { child: ChildProcess; kill: () => void; forceKill?: () => void; stop: () => Promise<void>; closed: Promise<void> };
 
 export function startDiffaiProcess(options: DiffaiProcessOptions): DiffaiProcessHandle {
@@ -65,15 +65,23 @@ export function startDiffaiProcess(options: DiffaiProcessOptions): DiffaiProcess
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "";
+  let stderr = "";
+  const reportedUrls = new Set<string>();
   let settled = false;
   let resolveClosed!: () => void;
   const closed = new Promise<void>(resolve => { resolveClosed = resolve; });
   let stopPromise: Promise<void> | undefined;
   child.stdout?.on("data", chunk => {
-    const text = chunk.toString();
-    stdout += text;
-    const url = text.match(/https?:\/\/127\.0\.0\.1:\d+/)?.[0];
-    if (url) options.onUrl?.(url);
+    stdout += chunk.toString();
+  });
+  child.stderr?.on("data", chunk => {
+    stderr += chunk.toString();
+    for (const match of stderr.matchAll(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+/g)) {
+      const url = match[0];
+      if (reportedUrls.has(url)) continue;
+      reportedUrls.add(url);
+      options.onUrl?.(url);
+    }
   });
   // stderr is diagnostic output; the result contract is stdout-only.
   child.once("error", error => {

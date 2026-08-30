@@ -1,23 +1,95 @@
 import { strict as assert } from "node:assert";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import path from "node:path";
 import test from "node:test";
-import { buildDiffaiArgs, stopChildProcess, type DiffaiProcessOptions } from "../extensions/diffai/process.ts";
-import { parseReviewResultMarker, parseReviewResultOutput } from "../extensions/diffai/protocol.ts";
+import { buildDiffaiArgs, startDiffaiProcess, stopChildProcess, type DiffaiProcessOptions } from "../extensions/diffai/process.ts";
+import { buildReviewResult, parseReviewResultLine, parseReviewResultOutput, serializeReviewResult } from "../protocol/index.ts";
 import { foregroundGuard } from "../extensions/diffai/index.ts";
 import { DIFFAI_REVIEW_STATE, readReviewState, SessionRouter, type ReviewState } from "../extensions/diffai/session-router.ts";
 import { ReviewLoop } from "../extensions/diffai/review-loop.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-test("DIFFAI_REVIEW_RESULTは厳格な一行JSONとして解析される", () => {
-  const result = parseReviewResultMarker('DIFFAI_REVIEW_RESULT={"decision":"changes_requested","comments":[{"body":"brace }"}]}');
-  assert.equal(result?.decision, "changes_requested");
-  assert.deepEqual(parseReviewResultOutput('ログ\nDIFFAI_REVIEW_RESULT={"decision":"approved","reviewId":"r1"}\n'), {
-    decision: "approved",
+test("ReviewResult v1はbare JSON一行として厳格に解析される", () => {
+  const result = buildReviewResult({
+    decision: "changes_requested",
     reviewId: "r1",
+    reviews: [{ id: "p1", path: "src/a.ts", status: "rejected" }],
+    comments: [{ id: "c1", proposalId: "p1", side: "new", line: 1, body: "brace } and 日本語" }],
+    fileFeedback: [],
+    feedback: { p1: "修正してください" },
+    replyFile: ".diffai/review-replies.json",
+    replyFormat: { replies: [{ commentId: "<comment id or fileFeedback id>", status: "fixed|replied|wontfix", body: "<reply shown in diffai>" }] },
   });
-  assert.throws(() => parseReviewResultMarker('DIFFAI_REVIEW_RESULT={"decision":"pending"}'));
-  assert.equal(parseReviewResultMarker('prefix DIFFAI_REVIEW_RESULT={"decision":"approved"}'), undefined);
+  assert.equal(parseReviewResultLine(`${serializeReviewResult(result)}\r`).reviewId, "r1");
+  assert.equal(parseReviewResultOutput(`${serializeReviewResult(result)}\r\n`).decision, "changes_requested");
+  assert.throws(() => parseReviewResultOutput(`ログ\n${serializeReviewResult(result)}\n`));
+  assert.throws(() => parseReviewResultOutput(`${serializeReviewResult(result)}\n${serializeReviewResult(result)}`));
+  assert.throws(() => parseReviewResultLine(JSON.stringify({ ...result, schemaVersion: 2 })));
+  assert.throws(() => parseReviewResultLine(JSON.stringify({ ...result, comments: [{ ...result.comments[0], unexpected: true }] })));
+  const legacyRecord = ["DIFFAI", "REVIEW", "RESULT="].join("_") + serializeReviewResult(result);
+  assert.throws(() => parseReviewResultLine(legacyRecord));
+});
+
+test("実processはstderrのURLだけを通知し、stdoutのbare v1 recordだけを受理する", async () => {
+  const result = buildReviewResult({
+    decision: "approved",
+    reviewId: "process-review",
+    reviews: [],
+    comments: [],
+    fileFeedback: [],
+    feedback: {},
+    replyFile: ".diffai/review-replies.json",
+    replyFormat: { replies: [{ commentId: "<comment id or fileFeedback id>", status: "fixed|replied|wontfix", body: "<reply shown in diffai>" }] },
+  });
+  const serverEntry = path.resolve("tests/fixtures/stdio-child.mjs");
+  const run = (mode: string) => new Promise<{ urls: string[]; results: unknown[]; errors: Error[]; exits: (number | null)[] }>(resolve => {
+    const urls: string[] = [];
+    const results: unknown[] = [];
+    const errors: Error[] = [];
+    const exits: (number | null)[] = [];
+    const handle = startDiffaiProcess({
+      serverEntry,
+      cwd: process.cwd(),
+      reviewId: result.reviewId,
+      env: { ...process.env, DIFFAI_STDIO_MODE: mode, DIFFAI_RESULT: serializeReviewResult(result) },
+      onUrl: url => urls.push(url),
+      onResult: value => results.push(value),
+      onError: error => errors.push(error),
+      onExitWithoutResult: code => exits.push(code),
+    });
+    handle.closed.then(() => resolve({ urls, results, errors, exits }));
+  });
+
+  const valid = await run("valid");
+  assert.deepEqual(valid.urls, ["http://127.0.0.1:4987"]);
+  assert.deepEqual(valid.results, [result]);
+  assert.deepEqual(valid.errors, []);
+  assert.deepEqual(valid.exits, []);
+
+  const stdoutPolluted = await run("stdout-polluted");
+  assert.deepEqual(stdoutPolluted.urls, []);
+  assert.deepEqual(stdoutPolluted.results, []);
+  assert.equal(stdoutPolluted.errors.length, 1);
+  assert.deepEqual(stdoutPolluted.exits, []);
+});
+
+test("必須versionとtop-level fieldの欠落はfail closedになる", () => {
+  const result = buildReviewResult({
+    decision: "approved",
+    reviewId: "required-fields",
+    reviews: [],
+    comments: [],
+    fileFeedback: [],
+    feedback: {},
+    replyFile: ".diffai/review-replies.json",
+    replyFormat: { replies: [] },
+  });
+  for (const field of ["schemaVersion", "decision", "reviewId", "reviews", "comments", "fileFeedback", "feedback", "replyFile", "replyFormat"]) {
+    const missing = { ...result } as Record<string, unknown>;
+    delete missing[field];
+    assert.throws(() => parseReviewResultLine(JSON.stringify(missing)), field);
+  }
 });
 
 test("CLIへreviewIdをPi非依存の引数として渡す", () => {

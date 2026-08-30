@@ -243,4 +243,8 @@ test("同じブラウザで完了後の返信確認と再レビューができ�
   await page.getByRole("button", { name: "レビューを完了" }).click();
   await expect(page.locator(".completion-overlay")).toContainText("このタブのままお待ちください");
   await expect.poll(async () => (await (await request.get("/api/state")).json()).resultCount).toBe(2);
+  const apiResult = await (await request.get("/api/review-result?after=0&expectedReviewId=new-review-for-conflict-test")).json();
+  expect(apiResult.schemaVersion).toBe(1);
+  expect(apiResult.decision).toBe("approved");
+  expect(apiResult).toEqual(expect.objectContaining({ reviews: expect.any(Array), comments: expect.any(Array), fileFeedback: expect.any(Array), feedback: expect.any(Object), replyFile: expect.any(String), replyFormat: expect.any(Object) }));
 });
