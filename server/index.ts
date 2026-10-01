@@ -128,6 +128,13 @@ function decodeContent(buffer: Buffer) {
   return `Binary file (${buffer.length} bytes, sha256 ${digest})`;
 }
 async function readOrEmpty(file: string) { try { return decodeContent(await fs.readFile(file)); } catch (e: any) { if (e.code === "ENOENT") return ""; throw e; } }
+// Git records a symbolic link as its target path; show the same instead of following the link
+// (following a link to a directory fails with EISDIR and emptied the whole review).
+async function readWorkingFile(file: string) {
+  try { if ((await fs.lstat(file)).isSymbolicLink()) return await fs.readlink(file); }
+  catch (e: any) { if (e.code !== "ENOENT") throw e; }
+  return readOrEmpty(file);
+}
 async function loadReviewReplies(): Promise<ReviewReply[]> {
   try {
     const text = await fs.readFile(safePath(".diffai/review-replies.json"), "utf8");
@@ -167,9 +174,9 @@ async function loadGitReview(target: string, compareWith?: string) {
   names = names.filter(file => file !== ".diffai/review-replies.json");
   reviewProposals = await Promise.all(names.map(async file => {
     let before = "", after = "";
-    if (target === "working") { before = await gitContent(`:${file}`); after = await readOrEmpty(safePath(file)); }
+    if (target === "working") { before = await gitContent(`:${file}`); after = await readWorkingFile(safePath(file)); }
     else if (target === "staged") { before = await gitContent(`HEAD:${file}`); after = await gitContent(`:${file}`); }
-    else if (target === "uncommitted") { before = await gitContent(`HEAD:${file}`); after = await readOrEmpty(safePath(file)); }
+    else if (target === "uncommitted") { before = await gitContent(`HEAD:${file}`); after = await readWorkingFile(safePath(file)); }
     else if (target === "compare" && compareWith) { const [base, head] = compareWith.split("\x1f"); before = await gitContent(`${base}:${file}`); after = await gitContent(`${head}:${file}`); }
     else { const hash = target === "latest" ? "HEAD" : target; before = await gitContent(`${hash}^:${file}`); after = await gitContent(`${hash}:${file}`); }
     return { id: `review:${target}:${compareWith ?? ""}:${file}`, path: file, before, after, summary: label, status: "pending" as const, reviewOnly: true };
@@ -177,7 +184,10 @@ async function loadGitReview(target: string, compareWith?: string) {
   return { label, proposals: reviewProposals };
 }
 let reviewReplies: ReviewReply[] = [];
-try { commits = await listCommits(); refs = await listRefs(); reviewReplies = await loadReviewReplies(); await loadGitReview("uncommitted"); } catch { /* The workspace may not be a Git repository yet. */ }
+try { commits = await listCommits(); refs = await listRefs(); reviewReplies = await loadReviewReplies(); await loadGitReview("uncommitted"); } catch (error) {
+  // The workspace may not be a Git repository yet. Report other failures instead of showing an empty review silently.
+  console.error(`diffai: could not load changes: ${error instanceof Error ? error.message : String(error)}`);
+}
 
 const app = express();
 app.use(express.json());

@@ -7,3 +7,4 @@ test-results/
 playwright-report/
 tests/.tmp/
 tests/.tmp-unborn/
+tests/.tmp-symlink/

@@ -17,5 +17,11 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 30_000,
     },
+    {
+      command: "node tests/start-symlink-server.mjs",
+      url: "http://127.0.0.1:4323",
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
   ],
 });
