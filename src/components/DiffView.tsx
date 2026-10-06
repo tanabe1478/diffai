@@ -20,11 +20,23 @@ registerCustomLanguage("tla", async () => {
   return { default: [{ ...grammar, name: "tla" } as LanguageRegistration] };
 }, ["tla"]);
 
+registerCustomLanguage("moonbit", async () => {
+  const { default: grammar } = await import("@wooorm/starry-night/source.moonbit");
+  return { default: [{ ...grammar, name: "moonbit" } as LanguageRegistration] };
+}, ["mbt"]);
+
+function languageForPath(path: string) {
+  const lowerPath = path.toLowerCase();
+  if (lowerPath.endsWith(".tla")) return "tla";
+  if (lowerPath.endsWith(".mbt")) return "moonbit";
+  return undefined;
+}
+
 export function DiffView({ proposal, comments, replies, onComment, onDelete }: Props) {
   const [diffStyle, setDiffStyle] = useState<"split" | "unified">(() => window.matchMedia("(max-width: 900px)").matches ? "unified" : "split");
   const [expandUnchanged, setExpandUnchanged] = useState(false);
   const fileDiff = useMemo(() => {
-    const lang = proposal.path.toLowerCase().endsWith(".tla") ? "tla" : undefined;
+    const lang = languageForPath(proposal.path);
     return parseDiffFromFile(
       { name: proposal.path, contents: proposal.before, lang },
       { name: proposal.path, contents: proposal.after, lang },

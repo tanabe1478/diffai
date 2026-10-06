@@ -10,15 +10,15 @@ test("固定fixtureの未コミットdiffをスクロールし、変更行へコ
   await expect(page.locator(".chat")).toHaveCount(0);
 
   await page.locator(".target select").selectOption("uncommitted");
-  await expect(page.locator(".tree-file")).toHaveCount(6);
+  await expect(page.locator(".tree-file")).toHaveCount(7);
   const srcDir = page.locator(".tree-dir").filter({ hasText: "src" });
   await expect(srcDir).toHaveAttribute("aria-expanded", "true");
   await srcDir.click();
   await expect(srcDir).toHaveAttribute("aria-expanded", "false");
-  await expect(page.locator(".tree-file")).toHaveCount(5);
+  await expect(page.locator(".tree-file")).toHaveCount(6);
   await srcDir.click();
   await expect(srcDir).toHaveAttribute("aria-expanded", "true");
-  await expect(page.locator(".tree-file")).toHaveCount(6);
+  await expect(page.locator(".tree-file")).toHaveCount(7);
   await page.locator(".tree-file").filter({ hasText: "long-file.ts" }).click();
   await expect(page.locator(".feedback-box .reply")).toContainText("値の変更を確認しました");
 
@@ -78,14 +78,14 @@ test("閲覧進捗と常設コメントサイドバーからファイルを移�
   await page.locator(".target select").selectOption("uncommitted");
   await expect(page.locator("header .status")).toContainText("review: 未コミットの変更");
   await expect(page.locator(".review-summary")).toBeVisible();
-  await expect(page.locator(".progress-label")).toContainText("0 / 6 ファイル");
+  await expect(page.locator(".progress-label")).toContainText("0 / 7 ファイル");
 
   const firstFile = page.locator(".tree-file").first();
   const firstPath = await firstFile.locator("small").textContent();
   await firstFile.click();
   await expect(page.locator(".title h2")).toContainText(firstPath!);
   await page.getByRole("button", { name: "閲覧済みにする", exact: true }).click();
-  await expect(page.locator(".progress-label")).toContainText("1 / 6 ファイル");
+  await expect(page.locator(".progress-label")).toContainText("1 / 7 ファイル");
   await expect(page.locator(".viewing-actions .viewed")).toHaveClass(/active/);
 
   await page.getByRole("button", { name: "次の未閲覧ファイル" }).click();
@@ -98,7 +98,7 @@ test("閲覧進捗と常設コメントサイドバーからファイルを移�
 
   await page.reload();
   await page.locator(".target select").selectOption("uncommitted");
-  await expect(page.locator(".progress-label")).toContainText("1 / 6 ファイル");
+  await expect(page.locator(".progress-label")).toContainText("1 / 7 ファイル");
   await expect(page.locator(".diff")).toBeVisible();
 });
 
@@ -175,10 +175,11 @@ test("DiffsのShikiで複数言語の構文をハイライトする", async ({ p
   await page.goto("/");
   await page.locator(".target select").selectOption("uncommitted");
   await expect(page.locator("header .status")).toContainText("review: 未コミットの変更");
-  await expect(page.locator(".tree-file")).toHaveCount(6);
+  await expect(page.locator(".tree-file")).toHaveCount(7);
 
   const cases = [
     { file: "StudyDict.tla", token: "CONSTANTS" },
+    { file: "main.mbt", token: "pub" },
     { file: "long-file.ts", token: "export" },
     { file: "README.md", token: "Highlight fixture" },
     { file: "config.json", token: '"enabled"' },
