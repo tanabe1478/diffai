@@ -150,7 +150,8 @@ async function git(args: string[]) { return (await exec("git", args, { cwd, maxB
 async function gitContent(spec: string) {
   try {
     const { stdout } = await exec("git", ["show", spec], { cwd, maxBuffer: 20 * 1024 * 1024, encoding: "buffer" });
-    return isBinary(stdout) ? decodeContent(stdout) : stdout.toString("utf8").trimEnd();
+    // Keep trailing newlines: the working-tree side is read verbatim, so trimming here showed a false "No newline at end of file".
+    return decodeContent(stdout);
   } catch { return ""; }
 }
 async function hasHead() { try { await git(["rev-parse", "--verify", "--quiet", "HEAD"]); return true; } catch { return false; } }
